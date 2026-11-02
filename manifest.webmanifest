@@ -1,0 +1,16 @@
+{
+  "name": "VTN Hub – Gestão de obras",
+  "short_name": "VTN Hub",
+  "description": "Gestão de obras e engenharia da VTN Engenharia e Construções",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#0b1530",
+  "theme_color": "#2563eb",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "img/icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "img/icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
