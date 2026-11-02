@@ -17,11 +17,23 @@
   if (window.claude && window.claude.use) return;          // rodando dentro do Claude: não interfere
   const suportado = 'showDirectoryPicker' in window;
   const IDB = 'vtn_pasta', LSID = 'vtn_pasta_id';
-  let raiz = null, prontoRes, nomePasta = '';
+  let raiz = null, prontoRes, nomePasta = '', modo = 'pasta', meuId = '';
+  const LST = 'vtn_token';
+  const APK = 'https://github.com/Victor-Bertoni/vtn-hub/releases/download/android/VTN-Hub.apk';
+  let token = ''; try { token = localStorage.getItem(LST) || ''; } catch (e) {}
+  let expirou = false;
+  const api = async (rota, opc = {}) => {
+    const r = await fetch('api/' + rota, Object.assign({ cache: 'no-store' }, opc, { headers: Object.assign({ 'X-VTN-Token': token }, opc.headers || {}) }));
+    if (r.status === 401 && modo === 'http' && token && !expirou) { expirou = true; try { localStorage.removeItem(LST); localStorage.removeItem('vtn_session'); } catch (e) {} alert('Sua sessão no VTN Hub expirou. Entre de novo.'); location.reload(); }
+    return r;
+  };
   const pronto = new Promise(r => { prontoRes = r; });
-  window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, trocar: () => escolher(true), suportado,
+  window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, trocar: () => escolher(true), suportado, get servidor() { return modo === 'http'; },
+    sair() { try { api('sair'); localStorage.removeItem(LST); } catch (e) {} },
     async abrir(caminho) {   // abre um arquivo da pasta (ex.: cub\tabela.pdf)
-      await pronto; const s = String(caminho).split(/[\\/]/).filter(Boolean); let d = raiz;
+      await pronto;
+      if (modo === 'http') { const r = await api('arquivo?caminho=' + encodeURIComponent(caminho)); if (r.ok) window.open(URL.createObjectURL(await r.blob()), '_blank'); return; }
+      const s = String(caminho).split(/[\\/]/).filter(Boolean); let d = raiz;
       for (const x of s.slice(0, -1)) d = await d.getDirectoryHandle(x);
       const f = await (await d.getFileHandle(s[s.length - 1])).getFile(); window.open(URL.createObjectURL(f), '_blank');
     } };
@@ -49,7 +61,59 @@
       if (trocar) location.reload(); else prontoRes(raiz);
     } catch (e) { if (e && e.name !== 'AbortError') alert('Não foi possível abrir a pasta: ' + e.message); }
   }
+  /* ---------- modo servidor (computador do Victor): login no servidor, sem escolher pasta ---------- */
+  async function hash(txt) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+  async function pedidoAnonimo(item) {
+    const uid = 'anon_' + Math.random().toString(36).slice(2, 10), id = 'SOL-' + Date.now().toString(36).toUpperCase();
+    const doc = Object.assign({ id, criadoEm: new Date().toISOString(), claudeId: uid, tela: 'login' }, item);
+    await api('doc?p=pedidos&id=' + uid, { method: 'PUT', body: JSON.stringify({ autorNome: doc.autorNome, atualizadoEm: doc.criadoEm }) });
+    const r = await api('doc?p=' + encodeURIComponent('pedidos/' + uid + '/itens') + '&id=' + id, { method: 'PUT', body: JSON.stringify(doc) });
+    if (!r.ok) throw new Error('falhou');
+  }
+  function telaLogin(msg) {
+    const el = tela(`<div id="lgBox"><h2 style="margin:6px 0">Entrar</h2>${msg ? `<p style="color:#b91c1c;font-size:13px">${msg}</p>` : ''}
+      <form id="lgF" style="display:grid;gap:10px"><input id="lgE" type="email" placeholder="E-mail" required autocomplete="username" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
+      <input id="lgS" type="password" placeholder="Senha" required autocomplete="current-password" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
+      <button id="lgOk" type="submit" style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px;font-weight:700;cursor:pointer">Entrar</button></form>
+      <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px"><a href="#" id="lgCriar">Criar conta</a><a href="#" id="lgEsq">Esqueci a senha</a></div>${/Android/i.test(navigator.userAgent) && !window.VTNAndroid ? `<a href="${APK}" style="display:block;margin-top:14px;text-align:center;background:#0f172a;color:#fff;border-radius:10px;padding:10px;font-size:14px;text-decoration:none">📱 Baixar o app VTN Hub para Android</a>` : ''}</div>`);
+    el.querySelector('#lgF').onsubmit = async e => {
+      e.preventDefault(); const bt = el.querySelector('#lgOk'); bt.disabled = true; bt.textContent = 'Entrando…';
+      try {
+        const r = await fetch('api/login', { method: 'POST', body: JSON.stringify({ email: el.querySelector('#lgE').value, senha: el.querySelector('#lgS').value }) }); const j = await r.json();
+        if (!j.ok) return telaLogin(j.erro || 'Não foi possível entrar.');
+        token = j.token; meuId = j.id; try { localStorage.setItem(LST, token); localStorage.setItem('vtn_session', j.id); localStorage.setItem('vtn_srv_id', j.id); } catch (er) {}
+        fechar(); modo = 'http'; nomePasta = 'servidor da VTN'; prontoRes(true);
+      } catch (er) { telaLogin('O computador servidor da VTN não respondeu. Ele precisa estar ligado.'); }
+    };
+    el.querySelector('#lgCriar').onclick = e => { e.preventDefault(); const b = el.querySelector('#lgBox');
+      b.innerHTML = `<h2 style="margin:6px 0">Criar conta</h2><p style="color:#64748b;font-size:13px">Victor ou Ismael aprovam o acesso.</p><form id="cf" style="display:grid;gap:8px">${['Nome completo|cn|text', 'E-mail|ce|email', 'Telefone|ct|tel', 'Senha (mínimo 8)|cs|password'].map(x => { const [l, i, t] = x.split('|'); return `<input id="${i}" type="${t}" placeholder="${l}" ${i !== 'ct' ? 'required' : ''} style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">`; }).join('')}<button style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:11px;font-weight:700">Pedir acesso</button></form><a href="#" id="volta" style="font-size:13px">Voltar</a>`;
+      b.querySelector('#volta').onclick = ev => { ev.preventDefault(); telaLogin(); };
+      b.querySelector('#cf').onsubmit = async ev => { ev.preventDefault(); const v = id => b.querySelector('#' + id).value.trim(); if (v('cs').length < 8) return alert('A senha precisa ter pelo menos 8 caracteres.');
+        const salt = [...crypto.getRandomValues(new Uint8Array(8))].map(x => x.toString(16).padStart(2, '0')).join('');
+        const conta = { nome: v('cn'), email: v('ce').toLowerCase(), telefone: v('ct'), papel: 'leitor', ativo: false, status: 'pendente', salt, senhaHash: await hash(salt + ':' + v('cs')), trocarSenha: false, solicitadoEm: new Date().toISOString() };
+        try { await pedidoAnonimo({ tipo: 'conta', autorNome: conta.nome, conta, resumo: ['Nova conta: ' + conta.nome + ' (' + conta.email + ')'] }); telaLogin('Pedido enviado. Assim que Victor ou Ismael aprovarem, entre com seu e-mail e senha.'); } catch (er) { alert('Não foi possível enviar agora.'); } };
+    };
+    el.querySelector('#lgEsq').onclick = async e => { e.preventDefault(); const em = (el.querySelector('#lgE').value || prompt('Seu e-mail:') || '').trim().toLowerCase(); if (!em) return;
+      try { await pedidoAnonimo({ tipo: 'senha', autorNome: em, email: em, resumo: ['Pedido de nova senha: ' + em] }); telaLogin('Pedido enviado. Victor ou Ismael vão gerar uma senha temporária para você.'); } catch (er) { alert('Não foi possível enviar agora.'); } };
+  }
   async function iniciar() {
+    try {   // o app está sendo servido pelo servidor da VTN?
+      const r = await fetch('api/info', { cache: 'no-store' });
+      if (r.ok && (await r.json()).ok) {
+        modo = 'http'; nomePasta = 'servidor da VTN';
+        if (token && (await api('lista?p=sistema')).ok) { try { meuId = localStorage.getItem('vtn_srv_id') || meuId; } catch (e) {} prontoRes(true); return; }
+        try { localStorage.removeItem('vtn_session'); } catch (e) {}
+        telaLogin(); return;
+      }
+    } catch (e) {}
+    if (window.VTNAndroid) {   // app do celular sem resposta do servidor
+      const el = tela(`<h2 style="margin:6px 0">Sem conexão com o VTN Hub</h2><p style="color:#475569">O computador do Victor precisa estar ligado e com internet. Confira também a internet do celular.</p>
+        <button id="pastaOk" style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:700;width:100%">Tentar de novo</button>
+        <button id="pastaOutra" style="background:none;border:0;color:#2563eb;margin-top:10px;width:100%">Trocar o endereço</button>`);
+      el.querySelector('#pastaOk').onclick = () => location.reload();
+      el.querySelector('#pastaOutra').onclick = () => window.VTNAndroid.trocarEndereco();
+      return;
+    }
     if (/[?&]teste=opfs/.test(location.search) && navigator.storage && navigator.storage.getDirectory) { raiz = await navigator.storage.getDirectory(); nomePasta = 'teste (navegador)'; prontoRes(raiz); return; }   // só para testes automáticos
     if (!suportado) { tela(`<h2 style="margin:6px 0">Use o Edge ou o Chrome no computador</h2><p style="color:#475569">O VTN Hub guarda os dados na pasta do OneDrive e precisa do Microsoft Edge ou do Google Chrome no Windows para acessá-la.</p>`); return; }
     const h = await lerGuardado();
@@ -74,16 +138,25 @@
   /* ---------- arquivos ---------- */
   const seg = p => String(p).split('/').filter(Boolean);
   async function dir(path, criar) { let d = raiz; for (const s of seg(path)) d = await d.getDirectoryHandle(s, { create: !!criar }); return d; }
+  const cache = {};   // modo servidor: guarda o último conteúdo de cada documento
   async function lerDoc(col, id) {
+    if (modo === 'http') { const r = await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id)); if (!r.ok) return null; const t = await r.text(); return { data: t ? JSON.parse(t) : null, mod: +(r.headers.get('X-Mod') || 0) || t.length }; }
     try { const f = await (await (await dir(col)).getFileHandle(id + '.json')).getFile(); const t = await f.text(); return { data: t ? JSON.parse(t) : null, mod: f.lastModified }; }
     catch (e) { return null; }
   }
   async function gravarDoc(col, id, data) {
+    if (modo === 'http') { const r = await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(data) }); if (!r.ok) { const e = new Error('sem permissão'); e.code = r.status === 403 ? 'permission_denied' : 'erro'; throw e; } return; }
     const d = await dir(col, true); const fh = await d.getFileHandle(id + '.json', { create: true });
     const w = await fh.createWritable(); await w.write(JSON.stringify(data)); await w.close();
   }
-  async function apagarDoc(col, id) { try { await (await dir(col)).removeEntry(id + '.json'); } catch (e) {} }
+  async function apagarDoc(col, id) { if (modo === 'http') { await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id), { method: 'DELETE' }); return; } try { await (await dir(col)).removeEntry(id + '.json'); } catch (e) {} }
   async function listar(col, limite) {
+    if (modo === 'http') {
+      const r = await api('lista?p=' + encodeURIComponent(col)); if (!r.ok) return [];
+      const itens = ((await r.json()).itens || []).slice(0, limite || 100000); const out = [];
+      await Promise.all(itens.map(async it => { const k = col + '/' + it.id; if (!cache[k] || cache[k].mod !== it.mod) { const d = await lerDoc(col, it.id); if (d) cache[k] = { data: d.data, mod: it.mod }; } if (cache[k]) out.push({ id: it.id, data: cache[k].data, mod: it.mod }); }));
+      return out;
+    }
     const out = []; let d; try { d = await dir(col); } catch (e) { return out; }
     for await (const [nome, h] of d.entries()) {
       if (h.kind !== 'file' || !nome.endsWith('.json') || nome.startsWith('~') || nome.startsWith('.')) continue;
@@ -96,7 +169,7 @@
 
   /* ---------- vigia (OneDrive trouxe mudança de outra pessoa) ---------- */
   const vigias = new Set();
-  setInterval(() => { if (raiz && !document.hidden) vigias.forEach(v => v().catch(() => {})); }, 4000);
+  setInterval(() => { if ((raiz || modo === 'http') && !document.hidden) vigias.forEach(v => v().catch(() => {})); }, 4000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && raiz) vigias.forEach(v => v().catch(() => {})); });
 
   function colecao(col, limite) {
@@ -141,7 +214,7 @@
   const db = { collection: p => { const s = seg(p); return s.length % 2 ? colecao(s.join('/')) : null; }, doc: p => { const s = seg(p); return documento(s.slice(0, -1).join('/'), s[s.length - 1]); } };
 
   /* ---------- quem está usando este computador ---------- */
-  let meuId = ''; try { meuId = localStorage.getItem(LSID) || ''; if (!meuId) { meuId = 'u_' + Math.random().toString(36).slice(2, 12); localStorage.setItem(LSID, meuId); } } catch (e) { meuId = 'u_local'; }
+  meuId = ''; try { meuId = localStorage.getItem(LSID) || ''; if (!meuId) { meuId = 'u_' + Math.random().toString(36).slice(2, 12); localStorage.setItem(LSID, meuId); } } catch (e) { meuId = 'u_local'; }
   const user = {
     async canEdit() { return true; },               // o papel no app (admin × leitor) decide o que cada um altera
     async id() { return meuId; },
@@ -155,15 +228,17 @@
   const assets = {
     async upload(blob) {
       await pronto; const id = 'A' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      if (modo === 'http') { const r = await api('arquivo?id=' + id, { method: 'PUT', body: blob }); if (!r.ok) throw new Error('envio'); await gravarDoc('arquivos/_tipos', id, { type: blob.type || 'application/octet-stream', size: blob.size }); return { id, url: '', sizeBytes: blob.size, contentType: blob.type }; }
       const d = await dir('arquivos', true); const fh = await d.getFileHandle(id, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close();
       await gravarDoc('arquivos/_tipos', id, { type: blob.type || 'application/octet-stream', size: blob.size });
       return { id, url: '', sizeBytes: blob.size, contentType: blob.type };
     },
     async get(id) {
-      await pronto; try { const f = await (await (await dir('arquivos')).getFileHandle(id)).getFile(); const t = tipos[id] || ((await lerDoc('arquivos/_tipos', id)) || {}).data || {}; return new Blob([await f.arrayBuffer()], { type: t.type || f.type || 'application/octet-stream' }); } catch (e) { return null; }
+      await pronto; if (modo === 'http') { const t = ((await lerDoc('arquivos/_tipos', id)) || {}).data || {}; const r = await api('arquivo?id=' + id + (t.type ? '&tipo=' + encodeURIComponent(t.type) : '')); return r.ok ? r.blob() : null; }
+      try { const f = await (await (await dir('arquivos')).getFileHandle(id)).getFile(); const t = tipos[id] || ((await lerDoc('arquivos/_tipos', id)) || {}).data || {}; return new Blob([await f.arrayBuffer()], { type: t.type || f.type || 'application/octet-stream' }); } catch (e) { return null; }
     },
     async url(id) { const b = await assets.get(id); return b ? URL.createObjectURL(b) : ''; },
-    async delete(id) { try { await (await dir('arquivos')).removeEntry(id); } catch (e) {} },
+    async delete(id) { if (modo === 'http') { await api('arquivo?id=' + id, { method: 'DELETE' }); return; } try { await (await dir('arquivos')).removeEntry(id); } catch (e) {} },
     async list() { return { assets: [], usage: {} }; }
   };
 

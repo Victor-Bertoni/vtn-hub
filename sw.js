@@ -1,7 +1,7 @@
 /* VTN Hub – service worker
    Rede primeiro: com internet, sempre carrega a versão mais nova (atualização obrigatória).
    Sem internet, abre a última versão guardada. */
-const CACHE = 'vtn-hub-v1';
+const CACHE = 'vtn-hub-v2';
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
@@ -13,6 +13,7 @@ self.addEventListener('fetch', e => {
   const mesmo = url.origin === self.location.origin;
   const cdn = /cdnjs\.cloudflare\.com|unpkg\.com|fonts\.(googleapis|gstatic)\.com/.test(url.href);
   if (!mesmo && !cdn) return;   // arquivos da pasta e cotações não passam por aqui
+  if (mesmo && /\/api\//.test(url.pathname)) return;   // dados do servidor: nunca do cache
   e.respondWith((async () => {
     const c = await caches.open(CACHE);
     try { const resp = await fetch(r, mesmo ? { cache: 'no-store' } : undefined); if (resp && resp.ok) c.put(r, resp.clone()); return resp; }

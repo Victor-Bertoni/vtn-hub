@@ -23,7 +23,7 @@ window.Desktop = (() => {
     return false;
   }
   function oferecer(forcar) {
-    if (instalado()) return;
+    if (instalado() || window.VTNAndroid) return;
     let visto = ''; try { visto = localStorage.getItem('vtn_pwa_oferecido') || ''; } catch (e) {}
     if (!forcar && visto) return;
     if (document.querySelector('.modal-bg')) { setTimeout(() => oferecer(forcar), 8000); return; }

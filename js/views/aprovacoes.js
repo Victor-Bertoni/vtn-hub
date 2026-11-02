@@ -39,7 +39,7 @@ Views.aprovacoes = {
     const acha = k => L.find(x => (x.chave || x.id) === k);
     const fim = (msg) => { UI.toast(msg); App.refresh(); try { App.contarAprovacoes(); } catch (e) {} };
     UI.$$('[data-ok]', el).forEach(b => b.onclick = async () => { const x = acha(b.dataset.ok); const txt = x.tipo === 'sugestao' ? 'Marcar esta sugestão como aceita?' : x.tipo === 'conta' ? 'Aprovar esta conta (somente visualização)?' : 'Aprovar e aplicar esta alteração para todos?'; if (!(await UI.confirm(txt, 'Aprovar'))) return; try { await Cloud.decidir(x, true); fim('Aprovado'); } catch (e) { UI.toast('Não foi possível gravar a decisão.', 'err'); } });
-    UI.$$('[data-senha]', el).forEach(b => b.onclick = async () => { const x = acha(b.dataset.senha); const u = Store.get('usuarios', x.autorId); if (!u) return UI.toast('Usuário não encontrado.', 'err'); await Contas.redefinir(u.id); try { await Cloud.decidir(x, true, 'senha temporária gerada'); } catch (e) {} App.refresh(); });
+    UI.$$('[data-senha]', el).forEach(b => b.onclick = async () => { const x = acha(b.dataset.senha); const u = Store.get('usuarios', x.autorId) || Store.all('usuarios').find(y => x.email && (y.email || '').toLowerCase() === x.email); if (!u) return UI.toast('Usuário não encontrado.', 'err'); await Contas.redefinir(u.id); try { await Cloud.decidir(x, true, 'senha temporária gerada'); } catch (e) {} App.refresh(); });
     UI.$$('[data-no]', el).forEach(b => b.onclick = async () => { try { await Cloud.decidir(acha(b.dataset.no), false); fim('Recusado'); } catch (e) { UI.toast('Não foi possível gravar a decisão.', 'err'); } });
     UI.icons();
   }

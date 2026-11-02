@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+
+// Assinatura: usa a chave guardada no GitHub (Settings › Secrets › VTN_KEYSTORE_B64 e VTN_KEYSTORE_SENHA),
+// assim as atualizações do APK instalam por cima. Sem a chave, o GitHub gera uma provisória.
+def ks = file(System.getenv('VTN_KEYSTORE') ?: 'vtn.keystore')
+def ksSenha = System.getenv('VTN_KEYSTORE_SENHA') ?: 'vtnhub123'
+
+android {
+    namespace 'br.com.vtn.hub'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'br.com.vtn.hub'
+        minSdk 26
+        targetSdk 34
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int)
+        versionName '1.0.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '1')
+        // endereço já preenchido (opcional): Settings › Secrets and variables › Actions › Variables › VTN_URL
+        resValue 'string', 'url_padrao', (System.getenv('VTN_URL') ?: '')
+    }
+    signingConfigs {
+        vtn { storeFile ks; storePassword ksSenha; keyAlias 'vtn'; keyPassword ksSenha }
+    }
+    buildTypes {
+        release { minifyEnabled false; signingConfig signingConfigs.vtn }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
