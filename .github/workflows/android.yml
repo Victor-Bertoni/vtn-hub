@@ -1,0 +1,48 @@
+# Monta o APK do VTN Hub para Android e publica em
+# https://github.com/Victor-Bertoni/vtn-hub/releases/download/android/VTN-Hub.apk
+# Roda sozinho quando a pasta android/ muda (ou em Actions › Android › Run workflow).
+# O conteúdo do app vem do servidor, então o APK quase nunca precisa ser refeito.
+name: Android
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.10.2' }
+      - name: Chave de assinatura
+        env:
+          KS_B64: ${{ secrets.VTN_KEYSTORE_B64 }}
+          KS_SENHA: ${{ secrets.VTN_KEYSTORE_SENHA }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/vtn.keystore"
+            echo "VTN_KEYSTORE_SENHA=$KS_SENHA" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Sem a chave fixa (secret VTN_KEYSTORE_B64): usando uma provisória. Para atualizar o APK por cima, desinstale o antigo."
+            keytool -genkeypair -keystore "$RUNNER_TEMP/vtn.keystore" -storepass vtnhub123 -keypass vtnhub123 -alias vtn -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=VTN Hub, O=VTN Engenharia, C=BR"
+            echo "VTN_KEYSTORE_SENHA=vtnhub123" >> "$GITHUB_ENV"
+          fi
+          echo "VTN_KEYSTORE=$RUNNER_TEMP/vtn.keystore" >> "$GITHUB_ENV"
+      - name: Montar APK
+        env:
+          VTN_URL: ${{ vars.VTN_URL }}
+        working-directory: android
+        run: gradle --no-daemon assembleRelease
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk VTN-Hub.apk
+          gh release delete android -y --cleanup-tag || true
+          gh release create android VTN-Hub.apk --title "VTN Hub para Android" --latest=false \
+            --notes "Instalar no celular: abrir este link no Android, baixar VTN-Hub.apk e permitir 'instalar apps desconhecidos'. Na primeira vez, colar o endereço do VTN Hub enviado pelo Victor."
