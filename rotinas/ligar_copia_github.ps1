@@ -1,48 +1,51 @@
 ﻿# =========================================================
-#  VTN HUB – LIGAR A CÓPIA DE CONSULTA NO GITHUB (uma vez)
-#  Para a equipe consultar os dados quando o computador do Victor estiver desligado.
+#  VTN HUB – LIGAR A PUBLICAÇÃO NO GITHUB (uma vez)
+#  Publica o endereço do túnel (para o site e o app acharem este PC) e a cópia
+#  de consulta criptografada (para quando este PC estiver desligado).
 #  Precisa de um "token" do GitHub que só pode alterar o repositório vtn-hub.
-#  O token fica guardado protegido pelo Windows neste computador (não vai para o OneDrive nem para o GitHub).
+#  Não precisa colar nada: depois de gerar o token, clique no ícone de copiar —
+#  esta janela pega o código da área de transferência sozinha e depois a limpa.
+#  O token fica guardado protegido pelo Windows neste computador
+#  (%LOCALAPPDATA%\VTN_Hub\github_token.bin), nunca no OneDrive nem no GitHub.
 # =========================================================
+param([switch]$SemPausa)
 . (Join-Path $PSScriptRoot 'config.ps1')
 . (Join-Path $PSScriptRoot 'copia.ps1')
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-Write-Host ''
-Write-Host 'PUBLICAÇÃO NO GITHUB: endereço para a equipe + cópia de consulta (para quando este computador estiver desligado)' -ForegroundColor Cyan
-Write-Host ''
-Write-Host 'Vai abrir a página do GitHub para criar uma chave de acesso (token). Preencha assim:'
-Write-Host '  1. Token name: VTN Hub copia'
-Write-Host '  2. Expiration: escolha o maior prazo (ou "No expiration", se aparecer)'
-Write-Host "  3. Repository access: Only select repositories  ->  $Repo"
-Write-Host '  4. Permissions › Repository permissions › Contents: Read and write'
-Write-Host '  5. Clique em "Generate token" e copie o código (começa com github_pat_)'
-Write-Host ''
+function Testar-Token([string]$t) {
+  try { $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo" -Headers @{ Authorization = "Bearer $t"; 'User-Agent' = 'VTN-Hub-servidor' } -TimeoutSec 30; return [bool]$r.permissions.push } catch { return $false }
+}
+
+Write-Host 'PUBLICAÇÃO NO GITHUB (endereço para a equipe + cópia para quando este PC estiver desligado)' -ForegroundColor Cyan
+Write-Host 'Abrindo o GitHub. Na página, confira:'
+Write-Host "   Token name: VTN Hub copia  |  Repository access: Only select repositories -> $Repo"
+Write-Host '   Permissions > Contents: Read and write'
+Write-Host 'Depois clique em  "Generate token"  e no  ícone de copiar  ao lado do código (github_pat_...).' -ForegroundColor Yellow
+Write-Host 'Esta janela pega o código sozinha. (Espera até 15 minutos.)'
 Start-Process 'https://github.com/settings/personal-access-tokens/new'
-$seg = Read-Host 'Cole aqui o token e aperte Enter' -AsSecureString
-$tok = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($seg)).Trim()
-if (-not $tok) { Write-Host 'Nada colado. Rode este arquivo de novo quando quiser.'; Read-Host 'Enter para fechar'; exit }
 
-try {
-  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo" -Headers @{ Authorization = "Bearer $tok"; 'User-Agent' = 'VTN-Hub-servidor' } -TimeoutSec 30
-  if (-not $r.permissions.push) { throw 'o token não tem permissão de escrita (Contents: Read and write) no vtn-hub' }
-} catch { Write-Host "Token não aceito: $($_.Exception.Message)" -ForegroundColor Red; Read-Host 'Enter para fechar'; exit }
+$tok = ''; $fim = (Get-Date).AddMinutes(15); $visto = ''
+while ((Get-Date) -lt $fim) {
+  Start-Sleep -Seconds 2
+  $c = ''; try { $c = "$(Get-Clipboard -Raw)".Trim() } catch { }
+  if ($c -and $c -ne $visto -and $c -match '^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$') {
+    $visto = $c
+    if (Testar-Token $c) { $tok = $c; break }
+    Write-Host 'Esse token não tem permissão de escrita no vtn-hub (Contents: Read and write). Gere outro e copie de novo.' -ForegroundColor Red
+  }
+}
+try { Set-Clipboard -Value ' ' } catch { }   # não deixa o token na área de transferência
+if (-not $tok) { Write-Host 'Não recebi o token. Rode "INSTALAR VTN HUB" de novo quando quiser.' -ForegroundColor Yellow; if (-not $SemPausa) { Start-Sleep 15 }; return }
 
 Protegido-Gravar $ArqToken $utf8sb.GetBytes($tok)
-Write-Host 'Token guardado. Publicando a primeira cópia...'
-
-# usuários atuais do banco (para incluir só quem está ativo)
-$us = @(); Get-ChildItem -LiteralPath (Join-Path $Banco 'vtn') -Filter 'usuarios__*.json' -ErrorAction SilentlyContinue | ForEach-Object { $us += @((Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json).json | ConvertFrom-Json) }
+Write-Host 'OK  token guardado (protegido pelo Windows)' -ForegroundColor Green
 try {
-  Publicar-Copia $Banco $us $Repo | Out-Null
-  Escrever-Log 'Cópia de consulta ligada e publicada no GitHub'
-  $n = (Ler-ChavesUsuarios).Count
-  Write-Host ''
-  Write-Host 'PRONTO. Endereço e cópia de consulta ligados.' -ForegroundColor Green
-  Write-Host 'A equipe usa: https://victor-bertoni.github.io/vtn-hub/  (no celular, o app VTN Hub com esse mesmo endereço)' -ForegroundColor Green
-  Write-Host 'O servidor atualiza a cópia sozinho (alguns minutos depois de cada alteração).'
-  Write-Host "Pessoas que já podem abrir a cópia: $n. Cada pessoa passa a poder abrir depois de entrar uma vez no VTN Hub com este computador ligado."
+  Publicar-Copia $Banco (Usuarios-Ativos) $Repo | Out-Null
+  Escrever-Log 'Publicação no GitHub ligada (endereço + cópia de consulta)'
+  Write-Host 'OK  endereço e cópia de consulta publicados no GitHub' -ForegroundColor Green
+  Write-Host 'Cada pessoa passa a abrir a cópia (PC desligado) depois de entrar uma vez com este PC ligado.'
 } catch { Write-Host "Não foi possível publicar agora: $($_.Exception.Message)" -ForegroundColor Red }
-# reinicia o servidor para ele começar a manter a cópia atualizada
+# reinicia o servidor para ele manter endereço e cópia atualizados
 try { Stop-ScheduledTask -TaskPath '\VTN Hub\' -TaskName 'Servidor' -ErrorAction SilentlyContinue; Start-Sleep 2; Start-ScheduledTask -TaskPath '\VTN Hub\' -TaskName 'Servidor' } catch { }
-Read-Host 'Enter para fechar'
+if (-not $SemPausa) { Start-Sleep 15 }
