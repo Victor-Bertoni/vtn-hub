@@ -36,7 +36,7 @@ window.Auth = (() => {
     user = u; try { localStorage.setItem(CONFIG.AUTH.sessionKey, u.id); } catch (e) { try { sessionStorage.setItem(CONFIG.AUTH.sessionKey, u.id); } catch (e2) {} }
     return true;
   }
-  function logout() { if (window.VTN_STANDALONE) return VTN_STANDALONE.sair(); if (window.VTN_PASTA && VTN_PASTA.servidor) VTN_PASTA.sair(); try { localStorage.removeItem(CONFIG.AUTH.sessionKey); sessionStorage.removeItem(CONFIG.AUTH.sessionKey); } catch (e) {} user = null; location.reload(); }
+  function logout() { if (window.VTN_STANDALONE) return VTN_STANDALONE.sair(); if (window.VTN_PASTA && (VTN_PASTA.servidor || VTN_PASTA.copia)) VTN_PASTA.sair(); try { localStorage.removeItem(CONFIG.AUTH.sessionKey); sessionStorage.removeItem(CONFIG.AUTH.sessionKey); } catch (e) {} user = null; location.reload(); }
   function switchTo(id) { user = Store.get('usuarios', id); App.renderShell(); App.route(); }
   return { current, can, init, login, logout, switchTo, hash, definirSenha };
 })();

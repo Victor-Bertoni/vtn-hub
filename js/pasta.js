@@ -40,18 +40,40 @@
     const ak = await crypto.subtle.importKey('raw', k64.slice(0, 32), 'AES-CBC', false, ['decrypt']);
     return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, ak, ct));
   }
-  async function abrirCopia(email, senha) {
+  const DK_LS = 'vtn_copia_dk';
+  async function baixarPacote() {
     let txt = '';
     try { const r = await fetch(COPIA_URL + '?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) { txt = await r.text(); try { localStorage.setItem(COPIA_CACHE, txt); } catch (e) {} } } catch (e) {}
     if (!txt) { try { txt = localStorage.getItem(COPIA_CACHE) || ''; } catch (e) {} }   // sem internet: última cópia guardada neste aparelho
     if (!txt) throw new Error('sem copia');
-    const pac = JSON.parse(txt);
+    return JSON.parse(txt);
+  }
+  async function decifrarPacote(pac, dk) {
+    let bruto = await abrirCaixa(dk, pac.dados);
+    bruto = new Uint8Array(await new Response(new Blob([bruto]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+    return { docs: JSON.parse(new TextDecoder().decode(bruto)), geradoEm: pac.geradoEm, dk };
+  }
+  async function abrirCopia(email, senha) {
+    const pac = await baixarPacote();
     const ch = pac.chaves[await sha256hex('vtn:' + email.trim().toLowerCase())];
     if (!ch) throw new Error('sem chave');
     const dk = await abrirCaixa(await derivar(senha, b64(ch.salt), pac.iter), ch);
-    let bruto = await abrirCaixa(dk, pac.dados);
-    bruto = new Uint8Array(await new Response(new Blob([bruto]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
-    return { docs: JSON.parse(new TextDecoder().decode(bruto)), geradoEm: pac.geradoEm };
+    return decifrarPacote(pac, dk);
+  }
+  // abre de novo sem pedir senha (chave lembrada neste aparelho; "Sair" apaga)
+  async function abrirCopiaLembrada() {
+    let dkTxt = '', uid = ''; try { dkTxt = localStorage.getItem(DK_LS) || ''; uid = localStorage.getItem('vtn_srv_id') || ''; } catch (e) {}
+    if (!dkTxt || !uid) return false;
+    try { copia = await decifrarPacote(await baixarPacote(), b64(dkTxt)); } catch (e) { try { localStorage.removeItem(DK_LS); } catch (x) {} return false; }
+    meuId = uid; try { localStorage.setItem('vtn_session', uid); } catch (e) {}
+    entrarCopia(); return true;
+  }
+  function entrarCopia() {
+    modo = 'copia'; nomePasta = 'cópia de consulta'; fechar(); faixaCopia(); prontoRes(true);
+    setInterval(async () => {   // busca a cópia nova sozinho a cada 2 min
+      if (document.hidden || !copia) return;
+      try { const pac = await baixarPacote(); if (pac.geradoEm !== copia.geradoEm) { copia = await decifrarPacote(pac, copia.dk); const q = document.querySelector('#faixaCopia b'); if (q) q.textContent = new Date(copia.geradoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); } } catch (e) {}
+    }, 120000);
   }
   const saida = () => { try { return JSON.parse(localStorage.getItem(SAIDA) || '[]'); } catch (e) { return []; } };
   async function enviarSaida() {   // pedidos feitos com o PC desligado: entram quando o servidor volta
@@ -64,7 +86,7 @@
     const quando = copia && copia.geradoEm ? new Date(copia.geradoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '?';
     const f = document.createElement('div'); f.id = 'faixaCopia';
     f.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;background:#f59e0b;color:#1c1917;font:600 12px/1.35 Inter,system-ui,sans-serif;padding:6px 12px;text-align:center';
-    f.innerHTML = `Modo consulta: o computador do Victor está desligado. Dados de ${quando}. Alterações viram pedidos e são enviadas quando ele ligar. <a href="#" id="fcTenta" style="color:#1c1917">Tentar conectar</a>`;
+    f.innerHTML = `Modo consulta: o computador do Victor está desligado. Dados de <b>${quando}</b>. Alterações viram pedidos e são enviadas quando ele ligar. <a href="#" id="fcTenta" style="color:#1c1917">Tentar conectar</a>`;
     document.body.appendChild(f); document.body.style.paddingTop = f.offsetHeight + 'px';
     f.querySelector('#fcTenta').onclick = e => { e.preventDefault(); location.reload(); };
     if (!/github\.io$/.test(location.hostname)) setInterval(async () => {   // servidor voltou? avisa
@@ -88,8 +110,8 @@
       const us = Object.keys(copia.docs.vtn || {}).filter(k => k.startsWith('usuarios__')).flatMap(k => { try { return JSON.parse(copia.docs.vtn[k].json); } catch (x) { return []; } });
       const u = us.find(x => (x.email || '').toLowerCase() === email.trim().toLowerCase());
       if (!u) return telaCopia('Conta não encontrada na cópia.');
-      meuId = u.id; try { localStorage.setItem('vtn_session', u.id); localStorage.setItem('vtn_srv_id', u.id); } catch (er) {}
-      modo = 'copia'; nomePasta = 'cópia de consulta'; fechar(); faixaCopia(); prontoRes(true);
+      meuId = u.id; try { localStorage.setItem('vtn_session', u.id); localStorage.setItem('vtn_srv_id', u.id); localStorage.setItem(DK_LS, btoa(String.fromCharCode(...copia.dk))); } catch (er) {}
+      entrarCopia();
     };
   }
   let token = ''; try { token = localStorage.getItem(LST) || ''; } catch (e) {}
@@ -101,7 +123,7 @@
   };
   const pronto = new Promise(r => { prontoRes = r; });
   window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, trocar: () => escolher(true), suportado, get servidor() { return modo === 'http'; }, get copia() { return modo === 'copia'; },
-    sair() { try { api('sair'); localStorage.removeItem(LST); } catch (e) {} },
+    sair() { try { if (modo === 'http') api('sair'); localStorage.removeItem(LST); localStorage.removeItem(DK_LS); } catch (e) {} },
     async abrir(caminho) {   // abre um arquivo da pasta (ex.: cub\tabela.pdf)
       await pronto;
       if (modo === 'http') { const r = await api('arquivo?caminho=' + encodeURIComponent(caminho)); if (r.ok) window.open(URL.createObjectURL(await r.blob()), '_blank'); return; }
@@ -179,6 +201,7 @@
       }
     } catch (e) {}
     if (/[?&]teste=opfs/.test(location.search) && navigator.storage && navigator.storage.getDirectory) { raiz = await navigator.storage.getDirectory(); nomePasta = 'teste (navegador)'; prontoRes(raiz); return; }   // só para testes automáticos
+    if (await abrirCopiaLembrada()) return;
     telaCopia();   // sem servidor: cópia de consulta (a pasta do OneDrive fica como opção no site do GitHub)
   }
   async function modoPasta() {
@@ -207,7 +230,7 @@
   async function dir(path, criar) { let d = raiz; for (const s of seg(path)) d = await d.getDirectoryHandle(s, { create: !!criar }); return d; }
   const cache = {};   // modo servidor: guarda o último conteúdo de cada documento
   async function lerDoc(col, id) {
-    if (modo === 'copia') { const d = ((copia.docs || {})[col] || {})[id] || (saida().find(x => x.col === col && x.id === id) || {}).data; return d ? { data: d, mod: 1 } : null; }
+    if (modo === 'copia') { const d = ((copia.docs || {})[col] || {})[id] || (saida().find(x => x.col === col && x.id === id) || {}).data; return d ? { data: d, mod: Date.parse(copia.geradoEm) || 1 } : null; }
     if (modo === 'http') { const r = await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id)); if (!r.ok) return null; const t = await r.text(); return { data: t ? JSON.parse(t) : null, mod: +(r.headers.get('X-Mod') || 0) || t.length }; }
     try { const f = await (await (await dir(col)).getFileHandle(id + '.json')).getFile(); const t = await f.text(); return { data: t ? JSON.parse(t) : null, mod: f.lastModified }; }
     catch (e) { return null; }
@@ -220,7 +243,7 @@
   }
   async function apagarDoc(col, id) { if (modo === 'copia') return; if (modo === 'http') { await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id), { method: 'DELETE' }); return; } try { await (await dir(col)).removeEntry(id + '.json'); } catch (e) {} }
   async function listar(col, limite) {
-    if (modo === 'copia') { const o = Object.assign({}, (copia.docs || {})[col] || {}); saida().filter(x => x.col === col).forEach(x => { o[x.id] = x.data; }); return Object.entries(o).slice(0, limite || 100000).map(([id, data]) => ({ id, data, mod: 1 })); }
+    if (modo === 'copia') { const o = Object.assign({}, (copia.docs || {})[col] || {}); saida().filter(x => x.col === col).forEach(x => { o[x.id] = x.data; }); return Object.entries(o).slice(0, limite || 100000).map(([id, data]) => ({ id, data, mod: Date.parse(copia.geradoEm) || 1 })); }
     if (modo === 'http') {
       const r = await api('lista?p=' + encodeURIComponent(col)); if (!r.ok) return [];
       const itens = ((await r.json()).itens || []).slice(0, limite || 100000); const out = [];
@@ -239,7 +262,7 @@
 
   /* ---------- vigia (OneDrive trouxe mudança de outra pessoa) ---------- */
   const vigias = new Set();
-  setInterval(() => { if ((raiz || modo === 'http') && !document.hidden) vigias.forEach(v => v().catch(() => {})); }, 4000);
+  setInterval(() => { if ((raiz || modo === 'http' || modo === 'copia') && !document.hidden) vigias.forEach(v => v().catch(() => {})); }, 4000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && raiz) vigias.forEach(v => v().catch(() => {})); });
 
   function colecao(col, limite) {
