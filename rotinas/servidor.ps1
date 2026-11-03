@@ -4,14 +4,16 @@
 #  • Serve o app em http://localhost:8737 (programa da pasta VTN_Gestao)
 #  • Lê e grava o banco direto na pasta BANCO DE DADOS do OneDrive,
 #    sem perguntar nada (o OneDrive sincroniza com os outros).
-#  • A cada 30 min confere no GitHub se há versão nova do programa e
+#  • A cada 1 min confere no GitHub se há versão nova do programa e
 #    atualiza sozinho (atualização obrigatória).
 #  Nada é apagado: o que o app "exclui" vai para BANCO DE DADOS\lixeira.
 # =========================================================
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'config.ps1')
 . (Join-Path $PSScriptRoot 'copia.ps1')   # cópia de consulta no GitHub (PC desligado)
-. (Join-Path $PSScriptRoot 'tunel.ps1')   # endereço da internet (Cloudflare, sem conta)
+. (Join-Path $PSScriptRoot 'tunel.ps1')
+. (Join-Path $PSScriptRoot 'email.ps1')   # e-mail de recuperação de senha dos administradores
+$tokensReset = @{}; $ultimoEmailReset = @{}   # endereço da internet (Cloudflare, sem conta)
 $OrigemSite = 'https://' + ($Repo.Split('/')[0]).ToLower() + '.github.io'   # site do GitHub Pages pode chamar este servidor
 $enderecoNovo = $false; $ultimaVigia = [datetime]::MinValue
 $ultimaGravacao = [datetime]::MinValue; $ultimoEnvio = [datetime]::MinValue; $copiaPendente = $true
@@ -56,7 +58,10 @@ function Usuarios {
     $d = Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json; foreach ($x in ($d.json | ConvertFrom-Json)) { $lista += $x } }   # foreach: no PowerShell 5.1 a lista vem como um item só
   # senha trocada por quem não é administrador (senhas\<conta>.json) vale se for mais nova
   $senhas = @(Get-ChildItem -LiteralPath (Join-Path $Banco 'senhas') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json })
+  $senhasAdm = Ler-SenhasAdmin   # senha redefinida por e-mail / no PC servidor (só administradores)
   foreach ($u in $lista) {
+    $a = $senhasAdm["$($u.id)"]
+    if ($a -and $u.papel -eq 'admin') { $ref = @("$($u.senhaRedefinidaEm)", "$($u.senhaAlteradaEm)") | Sort-Object | Select-Object -Last 1; if ("$($a.em)" -gt $ref) { $u | Add-Member -Force salt $a.salt; $u | Add-Member -Force senhaHash $a.senhaHash } }
     $s = $senhas | Where-Object { $_.usId -eq $u.id -and "$($_.em)" -gt "$($u.senhaRedefinidaEm)" } | Sort-Object em -Descending | Select-Object -First 1
     if ($s -and $u.papel -ne 'admin') { $u | Add-Member -Force salt $s.salt; $u | Add-Member -Force senhaHash $s.senhaHash }
   }
@@ -197,7 +202,7 @@ Iniciar-Tunel
 while ($l.IsListening) {
   $tarefa = $l.GetContextAsync()
   while (-not $tarefa.AsyncWaitHandle.WaitOne(1000)) {
-    if (((Get-Date) - $ultimaConferencia).TotalMinutes -ge 30) { $ultimaConferencia = Get-Date; Atualizar-Programa }
+    if (((Get-Date) - $ultimaConferencia).TotalSeconds -ge 60) { $ultimaConferencia = Get-Date; Atualizar-Programa }   # confere o GitHub a cada 1 min (atualização quase instantânea)
     # túnel: confere a cada 5 s; endereço novo é publicado na hora
     $agora = Get-Date
     if (($agora - $ultimaVigia).TotalSeconds -ge 5) { $ultimaVigia = $agora; if (Vigiar-Tunel) { $enderecoNovo = $true } }
@@ -231,6 +236,32 @@ while ($l.IsListening) {
       continue
     }
     if ($rota -eq '/api/sair') { $t = $req.Headers['X-VTN-Token']; if ($t) { $sessoes.Remove($t); Gravar-Sessoes }; Json $ctx @{ ok = $true }; continue }
+    if ($rota -eq '/api/esqueci' -and $req.HttpMethod -eq 'POST') {   # administrador: link de nova senha por e-mail
+      $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json; $em = "$($c.email)".Trim().ToLower()
+      $u = Usuarios | Where-Object { "$($_.email)".ToLower() -eq $em -and $_.ativo -ne $false } | Select-Object -First 1
+      if (-not $u -or $u.papel -ne 'admin') { Json $ctx @{ ok = $true; modo = 'pedido' }; continue }
+      if (-not (Email-Ligado)) { Json $ctx @{ ok = $true; modo = 'pedido'; aviso = 'e-mail do servidor não configurado' }; continue }
+      if ($ultimoEmailReset[$em] -and ((Get-Date) - $ultimoEmailReset[$em]).TotalSeconds -lt 120) { Json $ctx @{ ok = $true; modo = 'email' }; continue }
+      $tok = -join ((Bytes-Aleatorios 24) | ForEach-Object { $_.ToString('x2') })
+      $tokensReset[(Hash $tok)] = @{ id = $u.id; ate = (Get-Date).AddMinutes(30) }; $ultimoEmailReset[$em] = Get-Date
+      $orig = $req.Headers['Origin']
+      $base = if ($orig -like 'http://localhost*') { "$orig/" } else { "$OrigemSite/$($Repo.Split('/')[1])/" }
+      $link = "$base`?redefinir=$tok"
+      try {
+        Enviar-Email $u.email 'VTN Hub – redefinir sua senha' ("<p>Olá, $($u.nome).</p><p>Para criar uma nova senha no VTN Hub, abra o link abaixo (vale 30 minutos e só pode ser usado uma vez):</p><p><a href=`"$link`">$link</a></p><p>Se não foi você quem pediu, ignore este e-mail: sua senha atual continua valendo.</p><p>— VTN Hub</p>")
+        Escrever-Log "E-mail de nova senha enviado: $($u.nome)"; Json $ctx @{ ok = $true; modo = 'email' }
+      } catch { Escrever-Log "Aviso: e-mail de nova senha falhou: $($_.Exception.Message)"; Json $ctx @{ ok = $false; erro = 'Não foi possível enviar o e-mail agora.' } 500 }
+      continue
+    }
+    if ($rota -eq '/api/redefinir' -and $req.HttpMethod -eq 'POST') {   # link do e-mail: grava a senha nova do administrador
+      $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json; $k = Hash "$($c.token)"; $t = $tokensReset[$k]
+      if (-not $t -or $t.ate -lt (Get-Date)) { Json $ctx @{ ok = $false; erro = 'Link vencido ou já usado. Peça outro em "Esqueci a senha".' } 400; continue }
+      if ("$($c.senha)".Length -lt 8) { Json $ctx @{ ok = $false; erro = 'A senha precisa ter pelo menos 8 caracteres.' } 400; continue }
+      $tokensReset.Remove($k); Gravar-SenhaAdmin $t.id "$($c.senha)"; $script:cacheUs = $null
+      foreach ($kk in @($sessoes.Keys)) { if ($sessoes[$kk].id -eq $t.id) { $sessoes.Remove($kk) } }; Gravar-Sessoes   # sai de todos os aparelhos
+      Escrever-Log "Senha de administrador redefinida por e-mail: $($t.id)"; Json $ctx @{ ok = $true }
+      continue
+    }
     $sessao = Conferir-Sessao (Sessao $req)
     $anonimoPedido = (-not $sessao -and $rota -eq '/api/doc' -and $req.HttpMethod -eq 'PUT' -and "$($q['p'])" -like 'pedidos*')
     if ($rota -like '/api/*' -and -not $sessao -and -not $anonimoPedido) { Json $ctx @{ erro = 'login' } 401; continue }

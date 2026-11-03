@@ -66,6 +66,9 @@ window.Cloud = (() => {
       api.ativo = true;
       if (!state.obras) { state = (window.Seed ? Seed.build() : {}); Store.setDb(state); api.agendar(0); }
       else Store.setDb(comSenhas(state));
+      // alterações que ficaram guardadas no aparelho (servidor estava fora): reaplica e sincroniza
+      const off = lerOff();
+      if (off && off.qtd && state.obras) { if (window.VTN_PASTA && VTN_PASTA.copia) aplicarDiff(off); setTimeout(() => sincronizarOff(), 2500); }
     } catch (e) { console.error('Cloud.init', e); api.ativo = false; return false; }
     // quem pode editar: só o dono (Victor) e quem for convidado como Editor (Ismael)
     inicio = Date.now();
@@ -86,12 +89,14 @@ window.Cloud = (() => {
     if (unsub) return;
     unsub = db.collection(COL).limit(1000).onSnapshot(snap => {
       if (snap.metadata && snap.metadata.hasPendingWrites) return;
+      if (aGravar || gravando) return;   // edição minha pendente: não mexe na base; o validador junta ao gravar
       let mudou = false;
       snap.docChanges().forEach(ch => { const x = ch.doc.data && ch.doc.data(); const txt = x && x.json; if (ch.type === 'removed') delete ultDocs[ch.doc.id]; else ultDocs[ch.doc.id] = x; if (ch.type === 'removed') { if (ultimo[ch.doc.id] !== undefined) { delete ultimo[ch.doc.id]; mudou = true; } } else if (ultimo[ch.doc.id] !== txt) { ultimo[ch.doc.id] = txt; mudou = true; } });
       if (!mudou || gravando) return;
       const state = comSenhas(montar(snap.docs.map(d => d.data())));
       if (!state.obras) return;
       Store.setDb(state);
+      if (lerOff()) sincronizarOff();   // não perde o que ainda não sincronizou
       if (document.querySelector('.modal-bg')) { refreshAdiado = true; return; }
       try { App.renderShell(); App.route(); } catch (e) {}
       UI.toast('Dados atualizados por outro usuário da VTN');
@@ -99,8 +104,165 @@ window.Cloud = (() => {
     document.addEventListener('click', () => { if (refreshAdiado && !document.querySelector('.modal-bg')) { refreshAdiado = false; setTimeout(() => App.refresh(), 50); } }, true);
   }
 
+  /* ---------- sem servidor: alterações ficam no aparelho e sincronizam quando ele voltar ----------
+     Guarda a DIFERENÇA (registros novos/alterados/excluídos) entre o que veio do servidor e o que está na tela.
+     Ao voltar, aplica essa diferença sobre os dados mais novos do servidor (o que outros mudaram em outros
+     registros é mantido) e grava. Sobrevive a fechar o app. */
+  const OFF = 'vtn_offline_diff';
+  const lerOff = () => { try { return JSON.parse(localStorage.getItem(OFF) || 'null'); } catch (e) { return null; } };
+  const limparOff = () => { try { localStorage.removeItem(OFF); } catch (e) {} };
+  function aplicarDiff(d) {
+    Object.entries(d.colecoes || {}).forEach(([k, c]) => {
+      Store.db[k] = Store.db[k] || [];
+      (c.del || []).forEach(id => { Store.db[k] = Store.db[k].filter(x => x.id !== id); });
+      (c.up || []).forEach(v => { const i = Store.db[k].findIndex(x => x.id === v.id); if (i >= 0) Store.db[k][i] = v; else Store.db[k].push(v); });
+    });
+    Object.entries(d.meta || {}).forEach(([k, v]) => { if (k === 'seq') { Store.db.seq = Store.db.seq || {}; Object.entries(v || {}).forEach(([p, n]) => { Store.db.seq[p] = Math.max(Store.db.seq[p] || 0, n); }); } else Store.db[k] = v; });
+  }
+  /* ---------- VALIDADOR: junta alterações de duas pessoas sem perder nada ----------
+     orig = como cada registro estava quando EU comecei a mexer (base). srv = o que está no servidor agora.
+     • registro só meu / só dele → junta sozinho; mesmo registro, campos diferentes → junta campo a campo
+     • mesmo campo mudado pelos dois → conflito (o validador pergunta)
+     • mesmo código criado por dois (ex.: OS-0011) → renumera o meu e corrige as referências
+     • mesmo nº de proposta → próximo nº livre; mesma obra/nº de pasta → pergunta (juntar ou renumerar)
+     • um excluiu e o outro alterou → pergunta */
+  const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function origDe(base, d) {
+    const o = {};
+    Object.entries(d.colecoes || {}).forEach(([k, c]) => { const M = new Map((base[k] || []).map(x => [x.id, x])); o[k] = {}; (c.up || []).forEach(v => { o[k][v.id] = M.has(v.id) ? M.get(v.id) : null; }); (c.del || []).forEach(id => { o[k][id] = M.get(id) || null; }); });
+    return o;
+  }
+  function proximoCodigo(lista, idVelho) {
+    const m = /^(.*?)(\d+)$/.exec(idVelho); if (!m) return idVelho + '-2';
+    const max = lista.reduce((a, x) => { const r = new RegExp('^' + m[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$').exec(x.id || ''); return r ? Math.max(a, +r[1]) : a; }, 0);
+    return m[1] + String(max + 1).padStart(m[2].length, '0');
+  }
+  function renomear(d, velho, novo) {   // troca o código em tudo o que EU criei/alterei (referências: obraId, orcamentoId...)
+    const t = JSON.stringify(d.colecoes).split('"' + velho + '"').join('"' + novo + '"'); d.colecoes = JSON.parse(t);
+    if (d.orig) Object.values(d.orig).forEach(o => { if (velho in o) { o[novo] = o[velho]; delete o[velho]; } });
+  }
+  function mesclar(srv, d) {
+    const conflitos = [], avisos = [];
+    // 1) códigos criados pelos dois
+    Object.entries(d.colecoes || {}).forEach(([k, c]) => {
+      const lista = srv[k] || []; const orig = (d.orig || {})[k] || {};
+      (c.up || []).slice().forEach(v => {
+        if (orig[v.id] !== null || !lista.some(x => x.id === v.id)) return;   // não é novo meu, ou não colidiu
+        const s = lista.find(x => x.id === v.id);
+        if (igual(s, v)) return;
+        if (k === 'obras') { conflitos.push({ tipo: 'mesmaObra', k, id: v.id, meu: v, dele: s }); return; }
+        const novo = proximoCodigo(lista.concat(c.up.filter(x => x !== v)), v.id); avisos.push(`${v.id} já existia (criado por outra pessoa): o seu virou ${novo}`); renomear(d, v.id, novo);
+      });
+    });
+    // 2) aplica registro a registro
+    Object.entries(d.colecoes || {}).forEach(([k, c]) => {
+      srv[k] = srv[k] || []; const arr = srv[k]; const orig = (d.orig || {})[k] || {};
+      (c.up || []).forEach(v => {
+        if (conflitos.some(x => x.tipo === 'mesmaObra' && x.id === v.id && k === 'obras')) return;
+        const i = arr.findIndex(x => x.id === v.id), s = arr[i], o = orig[v.id];
+        if (o === null || o === undefined) { if (i >= 0) arr[i] = v; else arr.push(v); return; }   // novo meu
+        if (i < 0) { conflitos.push({ tipo: 'excluidoPeloOutro', k, id: v.id, meu: v }); return; }
+        if (igual(s, o)) { arr[i] = v; return; }                       // ninguém mais mexeu
+        const res = Object.assign({}, s), campos = [];
+        new Set([...Object.keys(o), ...Object.keys(v), ...Object.keys(s)]).forEach(f => {
+          if (f === 'atualizadoEm' || f === 'id') return;
+          const eu = !igual(v[f], o[f]), ele = !igual(s[f], o[f]);
+          if (eu && !ele) res[f] = v[f];
+          else if (eu && ele && !igual(v[f], s[f])) campos.push({ f, meu: v[f], dele: s[f] });
+        });
+        arr[i] = res;
+        if (campos.length) conflitos.push({ tipo: 'campos', k, id: v.id, campos, ref: res });
+      });
+      (c.del || []).forEach(id => {
+        const i = arr.findIndex(x => x.id === id); if (i < 0) return;
+        const o = orig[id]; if (o && !igual(arr[i], o)) { conflitos.push({ tipo: 'apagarAlterado', k, id, dele: arr[i] }); return; }
+        arr.splice(i, 1);
+      });
+    });
+    // 3) números de proposta repetidos (o meu pega o próximo livre)
+    try {
+      const minhas = new Set(((d.colecoes.contratos || {}).up || []).filter(x => ((d.orig || {}).contratos || {})[x.id] === null).map(x => x.id));
+      (srv.contratos || []).filter(x => minhas.has(x.id) && x.numero && Views.contratos.categoriaDe(x) === 'Proposta').forEach(x => {
+        const n = parseInt(x.numero, 10);
+        if ((srv.contratos || []).some(y => y.id !== x.id && !minhas.has(y.id) && parseInt(y.numero, 10) === n && Views.contratos.categoriaDe(y) === 'Proposta')) {
+          const max = Math.max(...(srv.contratos || []).filter(y => Views.contratos.categoriaDe(y) === 'Proposta').map(y => parseInt(y.numero, 10) || 0));
+          const velho = x.numero; const ano = String(x.numero).split('/')[1] || UI.today().slice(0, 4); x.numero = (max + 1) + '/' + ano; avisos.push(`Proposta nº ${velho} já existia: a sua virou nº ${x.numero}`);
+        }
+      });
+    } catch (e) {}
+    // 4) configurações e sequências
+    Object.entries(d.meta || {}).forEach(([k, v]) => { if (k === 'seq') { srv.seq = srv.seq || {}; Object.entries(v || {}).forEach(([p, n]) => { srv.seq[p] = Math.max(srv.seq[p] || 0, n); }); } else srv[k] = v; });
+    // sequências nunca ficam atrás dos códigos que existem
+    return { conflitos, avisos };
+  }
+  const NOMES = { obras: 'Obra', lancamentos: 'Lançamento', contratos: 'Documento', orcamentos: 'Orçamento', os: 'Ordem de serviço', pendencias: 'Pendência', pessoas: 'Pessoa', etapas: 'Etapa', medicoes: 'Medição', arquivos: 'Arquivo' };
+  const rotulo = (k, x) => `${NOMES[k] || k} ${x && x.id || ''} ${x ? (x.nome || x.titulo || x.descricao || '') : ''}`.trim();
+  const mostrar = v => v === undefined || v === null || v === '' ? '<i class="muted">(vazio)</i>' : UI.esc(typeof v === 'object' ? JSON.stringify(v).slice(0, 160) : String(v).slice(0, 160));
+  function validador(srv, conflitos) {   // abre a tela e devolve quando a pessoa decidir
+    return new Promise(res => {
+      const m = UI.modal({ title: 'Validador: alterações em conflito', wide: true, body: `<p class="tiny muted">Outra pessoa mexeu nos mesmos dados que você. Escolha o que fica em cada item. O resto já foi juntado sozinho.</p>
+        ${conflitos.map((c, n) => `<div class="card mt"><div class="card-b"><b>${UI.esc(rotulo(c.k, c.ref || c.meu || c.dele))}</b>
+          ${c.tipo === 'campos' ? c.campos.map((x, j) => `<div class="field mt"><label>${UI.esc(x.f)}</label>
+              <label class="row" style="gap:6px"><input type="radio" name="c${n}_${j}" value="meu" checked> Manter o <b>meu</b>: ${mostrar(x.meu)}</label>
+              <label class="row" style="gap:6px"><input type="radio" name="c${n}_${j}" value="dele"> Manter o <b>da outra pessoa</b>: ${mostrar(x.dele)}</label></div>`).join('')
+          : c.tipo === 'excluidoPeloOutro' ? `<p>Outra pessoa <b>excluiu</b> este registro e você o alterou.</p><label class="row" style="gap:6px"><input type="radio" name="c${n}" value="meu" checked> Recriar com a minha versão</label><label class="row" style="gap:6px"><input type="radio" name="c${n}" value="dele"> Deixar excluído</label>`
+          : c.tipo === 'apagarAlterado' ? `<p>Você <b>excluiu</b> este registro, mas outra pessoa o alterou.</p><label class="row" style="gap:6px"><input type="radio" name="c${n}" value="dele" checked> Manter (com a alteração dela)</label><label class="row" style="gap:6px"><input type="radio" name="c${n}" value="meu"> Excluir mesmo assim</label>`
+          : `<p>Você e outra pessoa cadastraram a obra com o <b>mesmo número de pasta</b> (${UI.esc(c.id)}).</p><p class="tiny">Sua: ${UI.esc(c.meu.nome || '')} · Dela: ${UI.esc(c.dele.nome || '')}</p>
+             <label class="row" style="gap:6px"><input type="radio" name="c${n}" value="juntar" checked> É a mesma obra: juntar (completa o que estiver vazio na dela)</label>
+             <label class="row" style="gap:6px"><input type="radio" name="c${n}" value="renumerar"> São obras diferentes: dar outro número para a minha</label>`}
+          </div></div>`).join('')}`,
+        footer: `<button class="btn primary" data-ok>Aplicar escolhas e sincronizar</button>` });
+      m.$('[data-ok]').onclick = () => {
+        conflitos.forEach((c, n) => {
+          const arr = srv[c.k] = srv[c.k] || [];
+          const val = nome => (m.el.querySelector(`[name="${nome}"]:checked`) || {}).value;
+          if (c.tipo === 'campos') { const r = arr.find(x => x.id === c.id); c.campos.forEach((x, j) => { if (val(`c${n}_${j}`) === 'meu') r[x.f] = x.meu; else r[x.f] = x.dele; }); }
+          else if (c.tipo === 'excluidoPeloOutro') { if (val(`c${n}`) === 'meu') arr.push(c.meu); }
+          else if (c.tipo === 'apagarAlterado') { if (val(`c${n}`) === 'meu') { const i = arr.findIndex(x => x.id === c.id); if (i >= 0) arr.splice(i, 1); } }
+          else if (c.tipo === 'mesmaObra') {
+            if (val(`c${n}`) === 'juntar') { const r = arr.find(x => x.id === c.id); Object.keys(c.meu).forEach(f => { if (r[f] === undefined || r[f] === '' || r[f] === null || (Array.isArray(r[f]) && !r[f].length)) r[f] = c.meu[f]; }); }
+            else { const novo = proximoCodigo(arr, c.id); const num = String(+novo.split('-')[1]); arr.push(Object.assign({}, c.meu, { id: novo, numero: num })); UI.toast('Sua obra ficou como ' + novo); }
+          }
+        });
+        m.close(); res();
+      };
+    });
+  }
+  let sincronizando = false;
+  async function sincronizarOff() {   // aplica o que ficou no aparelho sobre os dados do servidor (com validador) e grava
+    const off = lerOff(); if (!off || !off.qtd || sincronizando) return;
+    if (window.VTN_PASTA && VTN_PASTA.copia) { aplicarDiff(off); mostrarOffline(off.qtd); return; }
+    if (!api.podeEditar) return;
+    sincronizando = true;
+    try {
+      const srv = Store.db;   // já é o estado do servidor
+      const { conflitos, avisos } = mesclar(srv, off);
+      avisos.forEach(a => UI.toast(a));
+      if (conflitos.length) await validador(srv, conflitos);
+      Store.setDb(srv); try { App.refresh(); } catch (e) {}
+    } finally { sincronizando = false; }
+    api.agendar(0);
+  }
+  let avisouOff = false;
+  function guardarOffline() {
+    const base = comSenhas(montar(Object.values(ultDocs)));
+    const d = diferenca(base, Store.db);
+    const ant = lerOff();   // a base (orig) é a de quando a primeira alteração offline foi feita
+    const orig = origDe(base, d); if (ant && ant.orig) Object.entries(ant.orig).forEach(([k, o]) => { orig[k] = orig[k] || {}; Object.entries(o).forEach(([id, v]) => { if (id in orig[k]) orig[k][id] = v; }); });
+    try { if (d.qtd) localStorage.setItem(OFF, JSON.stringify({ em: new Date().toISOString(), por: ((window.Auth && Auth.current()) || {}).nome || '', colecoes: d.colecoes, meta: d.meta, orig, qtd: d.qtd })); else limparOff(); } catch (e) { UI.toast('Sem espaço no aparelho para guardar as alterações offline.', 'err'); return; }
+    if (d.qtd && !avisouOff) { avisouOff = true; UI.toast('Sem conexão com o servidor: alterações guardadas neste aparelho. Sincronizam sozinhas quando ele voltar.'); }
+    mostrarOffline(d.qtd);
+  }
+  function mostrarOffline(n) {
+    let el = document.getElementById('offBadge');
+    if (!n) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'offBadge'; el.className = 'cloud-ok on'; el.style.background = '#92400e'; document.body.appendChild(el); }
+    el.textContent = '⏳ ' + n + ' alteração(ões) guardada(s) no aparelho – aguardando o servidor';
+  }
+
   /* ---------- gravação (com espera curta para juntar várias edições) ---------- */
   api.agendar = function (ms = 900) {
+    if (api.podeEditar && window.VTN_PASTA && VTN_PASTA.copia) { clearTimeout(timer); timer = setTimeout(guardarOffline, 300); return; }
     if (!api.podeEditar) {   // sem permissão de editar: vira pedido de aprovação (ou só desfaz)
       clearTimeout(timer);
       timer = setTimeout(() => {
@@ -113,8 +275,9 @@ window.Cloud = (() => {
       }, 50);
       return;
     }
-    clearTimeout(timer); timer = setTimeout(gravar, ms);
+    clearTimeout(timer); aGravar = true; timer = setTimeout(gravar, ms);
   };
+  let aGravar = false;   // edição local ainda não gravada (a atualização do servidor espera e o validador junta)
   /* ---------- pedidos de alteração (aprovados pelos administradores) ---------- */
   const RUIDO = ['enqSnap', 'enqHist', 'relAuto', 'relCentral', 'blobs', 'vtnModelosVersao'];
   function diferenca(a, b) {
@@ -190,13 +353,7 @@ window.Cloud = (() => {
   api.decidir = async (sol, aprovar, obs) => {
     const u = (window.Auth && Auth.current()) || {};
     if (aprovar && (sol.tipo || 'alteracao') === 'alteracao') {
-      const d = JSON.parse(sol.json || '{}');
-      Object.entries(d.colecoes || {}).forEach(([k, c]) => {
-        Store.db[k] = Store.db[k] || [];
-        (c.del || []).forEach(id => { Store.db[k] = Store.db[k].filter(x => x.id !== id); });
-        (c.up || []).forEach(v => { const i = Store.db[k].findIndex(x => x.id === v.id); if (i >= 0) Store.db[k][i] = v; else Store.db[k].push(v); });
-      });
-      Object.entries(d.meta || {}).forEach(([k, v]) => { if (k === 'seq') { Store.db.seq = Store.db.seq || {}; Object.entries(v || {}).forEach(([p, n]) => { Store.db.seq[p] = Math.max(Store.db.seq[p] || 0, n); }); } else Store.db[k] = v; });
+      aplicarDiff(JSON.parse(sol.json || '{}'));
       Store.save();
     }
     if (aprovar && sol.tipo === 'conta' && sol.conta) {
@@ -215,21 +372,40 @@ window.Cloud = (() => {
   api.meuId = () => meId;
 
   async function gravar() {
+    aGravar = false;
     if (!db || !api.ativo) return;
     if (gravando) { pendente = true; return; }
     gravando = true;
     try {
-      const novos = blocos(Store.db);
-      const ops = [];
-      Object.entries(novos).forEach(([id, d]) => { if (ultimo[id] !== d.json) { ultimo[id] = d.json; ultDocs[id] = d; ops.push(db.collection(COL).doc(id).set(d)); } });
-      Object.keys(ultimo).forEach(id => { if (!novos[id]) { delete ultimo[id]; delete ultDocs[id]; ops.push(db.collection(COL).doc(id).delete()); } });
+      let novos = blocos(Store.db);
+      // VALIDADOR: alguém gravou os mesmos blocos depois que eu li? então junta antes de escrever
+      const mudados = Object.keys(novos).filter(id => ultimo[id] !== novos[id].json).concat(Object.keys(ultimo).filter(id => !novos[id]));
+      let mexeram = false;
+      for (const id of mudados) { const a = await db.collection(COL).doc(id).get(); const j = a.exists ? (a.data() || {}).json : undefined; if (j !== ultimo[id]) { mexeram = true; break; } }
+      if (mexeram) {
+        const base = comSenhas(montar(Object.values(ultDocs)));
+        const d = diferenca(base, Store.db); d.orig = origDe(base, d);
+        const snap = await db.collection(COL).limit(1000).get(); ultimo = {}; ultDocs = {};
+        snap.docs.forEach(x => { const v = x.data(); ultimo[x.id] = v && v.json; ultDocs[x.id] = v; });
+        const srv = comSenhas(montar(snap.docs.map(x => x.data())));
+        const { conflitos, avisos } = mesclar(srv, d);
+        avisos.forEach(a => UI.toast(a));
+        if (conflitos.length) await validador(srv, conflitos);
+        Store.setDb(srv); try { App.refresh(); } catch (e) {}
+        novos = blocos(Store.db);
+      }
+      const ops = [], feitos = [];
+      Object.entries(novos).forEach(([id, d]) => { if (ultimo[id] !== d.json) { ops.push(db.collection(COL).doc(id).set(d)); feitos.push(() => { ultimo[id] = d.json; ultDocs[id] = d; }); } });
+      Object.keys(ultimo).forEach(id => { if (!novos[id]) { ops.push(db.collection(COL).doc(id).delete()); feitos.push(() => { delete ultimo[id]; delete ultDocs[id]; }); } });
       await Promise.all(ops);
+      feitos.forEach(fn => fn());   // só depois de gravado no servidor
+      if (lerOff() && !diferenca(comSenhas(montar(Object.values(ultDocs))), Store.db).qtd) { limparOff(); mostrarOffline(0); avisouOff = false; UI.toast('Alterações feitas sem conexão foram sincronizadas com o servidor ✓'); }
       if (ops.length) { mostrarSalvo(); db.collection('sistema').doc('ultimaGravacao').set({ em: new Date().toISOString(), por: ((window.Auth && Auth.current()) || {}).nome || api.nome || '' }).catch(() => {}); }
     } catch (e) {
       console.error('Cloud.gravar', e);
       const code = e && e.code;
       UI.toast(code === 'permission_denied' || code === 'not_granted' ? 'Você está como visualizador: peça ao administrador acesso de edição para salvar.' : 'Não foi possível salvar online agora. Tentando de novo…', 'err');
-      if (code !== 'permission_denied' && code !== 'not_granted') setTimeout(() => api.agendar(0), 5000);
+      if (code !== 'permission_denied' && code !== 'not_granted') { guardarOffline(); setTimeout(() => api.agendar(0), 5000); }
     } finally { gravando = false; if (pendente) { pendente = false; api.agendar(300); } }
   }
   function mostrarSalvo() {
@@ -282,7 +458,7 @@ window.Cloud = (() => {
 
   /* depois do login: papel "Somente visualização" no app bloqueia edição mesmo para quem pode gravar no banco */
   api.aplicarPapel = function (u) {
-    if (window.VTN_PASTA) api.dbEditor = !!u && u.papel === 'admin' && !VTN_PASTA.copia;   // modo consulta: tudo vira pedido   // pasta do OneDrive: o papel no app decide
+    if (window.VTN_PASTA) api.dbEditor = !!u && u.papel === 'admin';   // modo consulta: administrador edita e fica no aparelho; demais viram pedido   // pasta do OneDrive: o papel no app decide
     api.podeEditar = api.dbEditor && !!u && u.papel === 'admin';   // só Victor e Ismael alteram direto
     document.documentElement.classList.toggle('somente-leitura', !api.podeEditar);
   };

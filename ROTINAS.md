@@ -20,7 +20,7 @@ não tem garantia de disponibilidade.
 | Peça | Onde fica | O que faz |
 |---|---|---|
 | Programa (código) | GitHub: repositório `vtn-hub` | HTML + CSS + JavaScript puro. Sem build, sem dependências para instalar. |
-| Servidor | `rotinas\servidor.ps1` no Windows do Victor (`http://localhost:8737`) | Liga com o Windows (tarefa "Servidor", escondida). Entrega o app, confere login e papel **no próprio servidor**, lê/grava a pasta do banco. A cada 30 min baixa a versão nova do GitHub. Nada é apagado: "excluir" move para `lixeira\`. |
+| Servidor | `rotinas\servidor.ps1` no Windows do Victor (`http://localhost:8737`) | Liga com o Windows (tarefa "Servidor", escondida). Entrega o app, confere login e papel **no próprio servidor**, lê/grava a pasta do banco. A cada 1 min confere o GitHub e baixa a versão nova. Nada é apagado: "excluir" move para `lixeira\`. |
 | Endereço da internet | túnel da Cloudflare (`rotinas\tunel.ps1`, aberto pelo servidor) | `https://<nome>.trycloudflare.com` → porta 8737 do PC; endereço publicado no GitHub para o app achar. O servidor só aceita chamadas do site do GitHub Pages e do próprio PC (CORS). |
 | Site no GitHub Pages | `https://victor-bertoni.github.io/vtn-hub/` | Cópia do código; abre o **modo consulta** (ver seção 6). |
 | App no computador | "Instalar" pelo Edge/Chrome (PWA) | Ícone na área de trabalho, janela própria, funciona sem internet (última versão guardada). |
@@ -65,7 +65,7 @@ Pastas e repositório ficam em `rotinas\config.ps1`.
 
 | Tarefa | Quando | Script | O que faz |
 |---|---|---|---|
-| Servidor | ao entrar no Windows (reinicia sozinho se cair) | `servidor.ps1` | app + banco + login; atualiza o programa do GitHub a cada 30 min |
+| Servidor | ao entrar no Windows (reinicia sozinho se cair) | `servidor.ps1` | app + banco + login; atualiza o programa do GitHub (confere a cada 1 min) |
 | Backup diário | todo dia 18:00* | `backup_diario.ps1` | zip do banco, banco em arquivo único, baixa o programa do GitHub (zip) e atualiza `Desktop\VTN_Gestao` |
 | Vigia fontes oficiais | segunda 08:30* | `radar_semanal.ps1` | abre as páginas oficiais (Receita/Simples, NFS-e, INSS, IRPF, MCMV, PBH, Itabirito, Sinduscon), compara com a semana anterior e registra o que mudou em `sistema\radar.json` + aviso na tela |
 | CUB mensal | todo dia 09:00* | `cub_mensal.ps1` | quando sai a tabela nova do Sinduscon-MG, baixa o PDF para `cub\`, grava `sistema\cub_aviso.json` e abre o PDF |
@@ -130,6 +130,28 @@ Regras para quem for alterar:
   Se o token vencer, rodar de novo. Código: `rotinas\copia.ps1` (PC) e `js/pasta.js` (app).
 * Sincronização manual: com autorização do Victor, uma IA ou pessoa pode rodar `Publicar-Copia` ou mexer nos dados
   pelo próprio app; nada depende de IA para funcionar.
+
+## 6c. Sem conexão e conflitos (validador)
+
+* **Servidor fora do ar** (PC desligado, sem internet, túnel caiu): administradores continuam editando; cada alteração
+  fica guardada **no aparelho** (`localStorage: vtn_offline_diff`, sobrevive a fechar o app) e sincroniza sozinha quando
+  o servidor volta (o app recarrega sozinho ao perceber). Os demais: alterações viram pedidos, também guardados e enviados depois.
+* **Validador** (`js/cloud.js`: `mesclar` + `validador`), em toda gravação e na sincronização:
+  registros diferentes e campos diferentes do mesmo registro → junta sozinho; mesmo campo mudado pelos dois → tela
+  "Validador" (manter o meu / o da outra pessoa); mesmo código criado pelos dois (ex.: OS-0011) → renumera o meu e
+  corrige as referências; mesmo nº de proposta → próximo nº livre; mesma obra/nº de pasta → pergunta (juntar ou
+  renumerar); um excluiu e o outro alterou → pergunta.
+* Pedidos aprovados depois (Aprovações) aplicam o que foi pedido sobre os dados atuais.
+
+## 6b. Senha esquecida
+
+* **Administradores (Victor e Ismael):** "Esqueci a senha" envia por e-mail um link (30 min, uso único) para criar
+  a senha nova, sem depender do outro administrador. O servidor envia pelo Gmail com "senha de app"
+  (ligar uma vez: `LIGAR EMAIL VTN HUB` na área de trabalho → `rotinas\ligar_email.ps1`).
+  A senha nova fica em `%LOCALAPPDATA%\VTN_Hub\senhas_admin.json` (só o servidor lê) e desconecta os aparelhos.
+* **Emergência (sem e-mail):** `REDEFINIR SENHA ADMIN` na área de trabalho do computador servidor
+  (`rotinas\redefinir_senha_admin.ps1`): escolhe o administrador e digita a senha nova.
+* **Demais usuários:** "Esqueci a senha" vira pedido; Victor ou Ismael geram uma senha temporária em Aprovações.
 
 ## 7. App Android (APK)
 

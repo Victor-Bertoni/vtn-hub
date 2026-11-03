@@ -90,7 +90,7 @@
     document.body.appendChild(f); document.body.style.paddingTop = f.offsetHeight + 'px';
     f.querySelector('#fcTenta').onclick = e => { e.preventDefault(); location.reload(); };
     setInterval(async () => {   // servidor voltou? avisa
-      try { if ((await acharServidor()) !== null) { f.style.background = '#22c55e'; f.innerHTML = 'O computador do Victor voltou. <a href="#" style="color:#052e16" onclick="location.reload();return false">Toque para atualizar</a>'; } } catch (e) {}
+      try { if ((await acharServidor()) !== null) { if (!document.querySelector('.modal-bg')) { location.reload(); return; } f.style.background = '#22c55e'; f.innerHTML = 'O computador do Victor voltou. <a href="#" style="color:#052e16" onclick="location.reload();return false">Toque para atualizar</a>'; } } catch (e) {}
     }, 120000);
   }
   function telaCopia(msg) {
@@ -202,6 +202,8 @@
         if (!j.ok) return telaLogin(j.erro || 'Não foi possível entrar.');
         token = j.token; meuId = j.id; try { localStorage.setItem(LST, token); localStorage.setItem('vtn_session', j.id); localStorage.setItem('vtn_srv_id', j.id); } catch (er) {}
         fechar(); modo = 'http'; nomePasta = 'servidor da VTN'; prontoRes(true); enviarSaida();
+        // já guarda a chave da cópia de consulta neste aparelho (para abrir direto se o servidor cair depois)
+        { const em = el.querySelector('#lgE').value, se = el.querySelector('#lgS').value; setTimeout(async () => { try { const c = await abrirCopia(em, se); localStorage.setItem(DK_LS, btoa(String.fromCharCode(...c.dk))); } catch (er) {} }, 1500); }
       } catch (er) { telaLogin('O computador servidor da VTN não respondeu. Ele precisa estar ligado.'); }
     };
     el.querySelector('#lgCriar').onclick = e => { e.preventDefault(); const b = el.querySelector('#lgBox');
@@ -213,13 +215,32 @@
         try { await pedidoAnonimo({ tipo: 'conta', autorNome: conta.nome, conta, resumo: ['Nova conta: ' + conta.nome + ' (' + conta.email + ')'] }); telaLogin('Pedido enviado. Assim que Victor ou Ismael aprovarem, entre com seu e-mail e senha.'); } catch (er) { alert('Não foi possível enviar agora.'); } };
     };
     el.querySelector('#lgEsq').onclick = async e => { e.preventDefault(); const em = (el.querySelector('#lgE').value || prompt('Seu e-mail:') || '').trim().toLowerCase(); if (!em) return;
+      // administrador: link de nova senha por e-mail (não depende de outro administrador)
+      try { const r = await fetch(BASE + 'api/esqueci', { method: 'POST', body: JSON.stringify({ email: em }) }); const j = await r.json(); if (j.modo === 'email') return telaLogin('Enviamos um link para o seu e-mail para criar a nova senha (vale 30 minutos). Confira também a caixa de spam.'); if (j.ok === false) return telaLogin(j.erro || 'Não foi possível enviar o e-mail agora.'); } catch (er) {}
       try { await pedidoAnonimo({ tipo: 'senha', autorNome: em, email: em, resumo: ['Pedido de nova senha: ' + em] }); telaLogin('Pedido enviado. Victor ou Ismael vão gerar uma senha temporária para você.'); } catch (er) { alert('Não foi possível enviar agora.'); } };
+  }
+  /* link do e-mail "Esqueci a senha" (administradores) */
+  function telaNovaSenha(tok, msg) {
+    const el = tela(`<h2 style="margin:6px 0">Criar nova senha</h2>${msg ? `<p style="color:#b91c1c;font-size:13px">${msg}</p>` : ''}
+      <form id="nsF" style="display:grid;gap:10px"><input id="ns1" type="password" placeholder="Nova senha (mínimo 8)" required autocomplete="new-password" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
+      <input id="ns2" type="password" placeholder="Repita a nova senha" required autocomplete="new-password" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
+      <button id="nsOk" type="submit" style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px;font-weight:700;cursor:pointer">Salvar nova senha</button></form>`);
+    el.querySelector('#nsF').onsubmit = async e => {
+      e.preventDefault(); const a = el.querySelector('#ns1').value, b = el.querySelector('#ns2').value;
+      if (a !== b) return telaNovaSenha(tok, 'As senhas não conferem.'); if (a.length < 8) return telaNovaSenha(tok, 'A senha precisa ter pelo menos 8 caracteres.');
+      try { const r = await fetch(BASE + 'api/redefinir', { method: 'POST', body: JSON.stringify({ token: tok, senha: a }) }); const j = await r.json(); if (!j.ok) return telaNovaSenha(tok, j.erro || 'Não foi possível salvar.'); }
+      catch (er) { return telaNovaSenha(tok, 'O computador servidor da VTN não respondeu.'); }
+      history.replaceState(null, '', location.pathname + location.hash); token = ''; try { localStorage.removeItem(LST); localStorage.removeItem(DK_LS); } catch (er) {}
+      telaLogin('Senha nova salva. Entre com ela.');
+    };
   }
   async function iniciar() {
     try {   // acha o servidor da VTN (no próprio PC ou pelo túnel publicado no GitHub)
       const achado = await acharServidor();
       if (achado !== null) {
         BASE = achado; modo = 'http'; nomePasta = 'servidor da VTN';
+        const tokRedef = new URLSearchParams(location.search).get('redefinir');
+        if (tokRedef) { telaNovaSenha(tokRedef); return; }
         if (token && (await api('lista?p=sistema')).ok) { try { meuId = localStorage.getItem('vtn_srv_id') || meuId; } catch (e) {} prontoRes(true); enviarSaida(); return; }
         try { localStorage.removeItem('vtn_session'); } catch (e) {}
         telaLogin(); return;
