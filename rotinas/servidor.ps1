@@ -11,6 +11,9 @@
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'config.ps1')
 . (Join-Path $PSScriptRoot 'copia.ps1')   # cópia de consulta no GitHub (PC desligado)
+. (Join-Path $PSScriptRoot 'tunel.ps1')   # endereço da internet (Cloudflare, sem conta)
+$OrigemSite = 'https://' + ($Repo.Split('/')[0]).ToLower() + '.github.io'   # site do GitHub Pages pode chamar este servidor
+$enderecoNovo = $false; $ultimaVigia = [datetime]::MinValue
 $ultimaGravacao = [datetime]::MinValue; $ultimoEnvio = [datetime]::MinValue; $copiaPendente = $true
 $Porta = 8737
 $utf8 = New-Object Text.UTF8Encoding $false
@@ -28,6 +31,8 @@ function Responder($ctx, [int]$status, [string]$tipo, [byte[]]$corpo) {
   try {
     $r = $ctx.Response; $r.StatusCode = $status; $r.ContentType = $tipo
     $r.Headers['Cache-Control'] = 'no-store'
+    $o = $ctx.Request.Headers['Origin']
+    if ($o -and ($o -eq $OrigemSite -or $o -like 'http://localhost*')) { $r.Headers['Access-Control-Allow-Origin'] = $o; $r.Headers['Vary'] = 'Origin'; $r.Headers['Access-Control-Expose-Headers'] = 'X-Mod' }
     if ($corpo) { $r.ContentLength64 = $corpo.Length; $r.OutputStream.Write($corpo, 0, $corpo.Length) }
     $r.OutputStream.Close()
   } catch { }
@@ -119,7 +124,7 @@ function Atualizar-Programa {
 
 Atualizar-Programa
 Ler-Sessoes
-# "+" aceita o endereço público (Tailscale) além de localhost; precisa da liberação feita uma vez pelo instalar_rotinas.ps1
+# "+" aceita outros nomes além de localhost (precisa da liberação feita pelo instalar_rotinas.ps1); o túnel já chega como localhost
 $l = New-Object Net.HttpListener
 $l.Prefixes.Add("http://+:$Porta/")
 try { $l.Start() } catch {
@@ -128,22 +133,31 @@ try { $l.Start() } catch {
   catch { Escrever-Log "Servidor já está rodando ou a porta $Porta está ocupada."; exit }
 }
 Escrever-Log "Servidor do VTN Hub ligado em http://localhost:$Porta (banco: $Banco)"
+Iniciar-Tunel
 
 while ($l.IsListening) {
   $tarefa = $l.GetContextAsync()
   while (-not $tarefa.AsyncWaitHandle.WaitOne(1000)) {
     if (((Get-Date) - $ultimaConferencia).TotalMinutes -ge 30) { $ultimaConferencia = Get-Date; Atualizar-Programa }
-    # cópia de consulta: 2 min depois da última alteração (no máximo a cada 5 min) e, de todo jeito, a cada 6 h
+    # túnel: confere a cada 5 s; endereço novo é publicado na hora
     $agora = Get-Date
-    if ((($copiaPendente -or $ultimaGravacao -gt $ultimoEnvio) -and ($agora - $ultimaGravacao).TotalMinutes -ge 2 -and ($agora - $ultimoEnvio).TotalMinutes -ge 5) -or ($agora - $ultimoEnvio).TotalHours -ge 6) {
-      $ultimoEnvio = $agora
-      try { $r = Publicar-Copia $Banco (Usuarios) $Repo; if ($r -eq 'ok') { $copiaPendente = $false; Escrever-Log 'Cópia de consulta publicada no GitHub' } }
+    if (($agora - $ultimaVigia).TotalSeconds -ge 5) { $ultimaVigia = $agora; if (Vigiar-Tunel) { $enderecoNovo = $true } }
+    # cópia de consulta: 2 min depois da última alteração (no máximo a cada 5 min) e, de todo jeito, a cada 6 h
+    if ($enderecoNovo -or (($copiaPendente -or $ultimaGravacao -gt $ultimoEnvio) -and ($agora - $ultimaGravacao).TotalMinutes -ge 2 -and ($agora - $ultimoEnvio).TotalMinutes -ge 5) -or ($agora - $ultimoEnvio).TotalHours -ge 6) {
+      $ultimoEnvio = $agora; $enderecoNovo = $false
+      try { $r = Publicar-Copia $Banco (Usuarios) $Repo $script:urlTunel; if ($r -eq 'ok') { $copiaPendente = $false; Escrever-Log 'Cópia de consulta e endereço publicados no GitHub' } }
       catch { Escrever-Log "Aviso: cópia de consulta não publicada: $($_.Exception.Message)" }
     }
   }
   $ctx = $tarefa.Result; $req = $ctx.Request
   try {
     $rota = $req.Url.AbsolutePath; $q = $req.QueryString
+    if ($req.HttpMethod -eq 'OPTIONS') {   # pré-checagem do navegador (site do GitHub chamando o servidor)
+      $ctx.Response.Headers['Access-Control-Allow-Methods'] = 'GET, PUT, POST, DELETE, OPTIONS'
+      $ctx.Response.Headers['Access-Control-Allow-Headers'] = 'X-VTN-Token, Content-Type'
+      $ctx.Response.Headers['Access-Control-Max-Age'] = '600'
+      Responder $ctx 204 'text/plain' $null; continue
+    }
     if ($rota -eq '/api/info') { Json $ctx @{ ok = $true; pasta = (Split-Path $Banco -Leaf) }; continue }
     if ($rota -eq '/api/login' -and $req.HttpMethod -eq 'POST') {
       $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json

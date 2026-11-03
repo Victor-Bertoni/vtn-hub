@@ -7,6 +7,7 @@
 #    só quem sabe e-mail + senha do VTN Hub abre a cópia. A senha nunca é gravada.
 #  • Publica no GitHub, ramo "consulta" (um único commit, substituído a cada envio,
 #    para o repositório não crescer). O app lê de raw.githubusercontent.com.
+#  • Junto vai endereco.json com o endereço atual do túnel (sem dados; só para o app achar o PC).
 #  Arquivos locais (fora do OneDrive): %LOCALAPPDATA%\VTN_Hub\
 #    chave_consulta.bin  chave dos dados (protegida pelo Windows / DPAPI)
 #    chaves_usuarios.json chave embrulhada por pessoa (gerada quando ela entra no VTN Hub)
@@ -97,7 +98,7 @@ function Montar-Copia([string]$banco, $usuariosAtivos) {
 
 function Token-GitHub { $b = Protegido-Ler $ArqToken; if ($b) { return $utf8sb.GetString($b) } else { return $null } }
 
-function Publicar-Copia([string]$banco, $usuariosAtivos, [string]$repo) {
+function Publicar-Copia([string]$banco, $usuariosAtivos, [string]$repo, [string]$endereco = '') {
   $tok = Token-GitHub; if (-not $tok) { return 'sem token' }
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $json = Montar-Copia $banco $usuariosAtivos
@@ -105,7 +106,11 @@ function Publicar-Copia([string]$banco, $usuariosAtivos, [string]$repo) {
   $api = "https://api.github.com/repos/$repo/git"
   function Postar($url, $obj, $metodo = 'POST') { Invoke-RestMethod -Method $metodo -Uri $url -Headers $h -ContentType 'application/json; charset=utf-8' -Body $utf8sb.GetBytes(($obj | ConvertTo-Json -Depth 5 -Compress)) -TimeoutSec 60 }
   $blob = Postar "$api/blobs" @{ content = [Convert]::ToBase64String($utf8sb.GetBytes($json)); encoding = 'base64' }
-  $tree = Postar "$api/trees" @{ tree = @(@{ path = 'dados.json'; mode = '100644'; type = 'blob'; sha = $blob.sha }) }
+  # endereço atual do túnel (para o app achar o PC); vazio = PC sem túnel agora
+  if (-not $endereco) { $ae = Join-Path $DirLocal 'endereco.txt'; if (Test-Path $ae) { $endereco = (Get-Content -Raw $ae).Trim() } }
+  $end = (@{ url = $endereco; em = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json -Compress)
+  $blob2 = Postar "$api/blobs" @{ content = [Convert]::ToBase64String($utf8sb.GetBytes($end)); encoding = 'base64' }
+  $tree = Postar "$api/trees" @{ tree = @(@{ path = 'dados.json'; mode = '100644'; type = 'blob'; sha = $blob.sha }, @{ path = 'endereco.json'; mode = '100644'; type = 'blob'; sha = $blob2.sha }) }
   $com = Postar "$api/commits" @{ message = 'Cópia de consulta (criptografada)'; tree = $tree.sha; parents = @() }
   try { Postar "$api/refs/heads/consulta" @{ sha = $com.sha; force = $true } 'PATCH' | Out-Null }
   catch { Postar "$api/refs" @{ ref = 'refs/heads/consulta'; sha = $com.sha } | Out-Null }

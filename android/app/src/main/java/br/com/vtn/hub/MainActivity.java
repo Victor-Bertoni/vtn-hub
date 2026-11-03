@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
         super.onCreate(salvo);
         prefs = getSharedPreferences("vtn", MODE_PRIVATE);
         endereco = prefs.getString("url", "");
-        if (endereco.isEmpty()) endereco = getString(R.string.url_padrao);
+        if (endereco.isEmpty() || endereco.contains(".ts.net")) endereco = getString(R.string.url_padrao);   // endereço antigo do Tailscale: usa o site
         if (endereco.isEmpty()) mostrarConfiguracao(null); else abrirApp();
     }
 
@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         box.addView(t);
 
         TextView s = new TextView(this);
-        s.setText("Cole o endereço do VTN Hub que o Victor enviou (começa com https://). É feito só uma vez.");
+        s.setText("Endereço do VTN Hub (normalmente https://victor-bertoni.github.io/vtn-hub/).");
         s.setTextColor(Color.parseColor("#CBD5E1")); s.setTextSize(15); s.setPadding(0, dp(10), 0, dp(18));
         box.addView(s);
 
@@ -124,7 +124,9 @@ public class MainActivity extends Activity {
         String u = m.group();
         Uri x = Uri.parse(u);
         if (x.getHost() == null || x.getHost().isEmpty()) return null;
-        return "https://" + x.getHost() + (x.getPort() > 0 ? ":" + x.getPort() : "") + "/";
+        String caminho = x.getPath() == null ? "/" : x.getPath();
+        if (!caminho.endsWith("/")) caminho = caminho.substring(0, caminho.lastIndexOf('/') + 1);
+        return "https://" + x.getHost() + (x.getPort() > 0 ? ":" + x.getPort() : "") + caminho;
     }
 
     /* ---------- o app ---------- */

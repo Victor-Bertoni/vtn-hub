@@ -2,13 +2,16 @@
 
 Este documento explica o sistema inteiro para quem for manter: uma pessoa ou outra IA.
 Nada aqui depende de IA. Serviços usados: **GitHub** (guarda o código), **OneDrive** (guarda e faz
-cópia dos dados), **Windows do Victor** (servidor + rotinas) e **Tailscale Funnel** (endereço https
-gratuito para a equipe chegar no computador do Victor; só o Victor tem conta).
+cópia dos dados), **Windows do Victor** (servidor + rotinas) e **túnel gratuito da Cloudflare**
+(`cloudflared`, "quick tunnel", **sem conta**) para a internet chegar no computador do Victor.
 
-**Como a equipe usa:** abre o endereço `https://<computador>.<rede>.ts.net/` (salvo em
-`Desktop\VTN Hub - endereço para a equipe.txt` e em `BANCO DE DADOS\sistema\endereco.json`) e entra
-com e-mail e senha do VTN Hub. Ninguém escolhe pasta, ninguém entra no OneDrive nem no Claude.
-**Limite:** funciona enquanto o computador do Victor estiver ligado e com internet.
+**Como a equipe usa:** sempre o mesmo endereço, **https://victor-bertoni.github.io/vtn-hub/** (no celular, o
+app VTN Hub, que abre esse endereço). O app procura o PC sozinho: o servidor abre o túnel
+(`https://<nome>.trycloudflare.com`, muda quando o PC reinicia) e publica o endereço atual no GitHub
+(ramo `consulta`, `endereco.json`). Achou o PC → funciona completo, com login do VTN Hub. Não achou →
+**modo consulta** (seção 6). Ninguém escolhe pasta, ninguém entra no OneDrive, no Claude nem em outro serviço.
+**Limite:** editar direto só com o computador do Victor ligado e com internet; o túnel gratuito da Cloudflare
+não tem garantia de disponibilidade.
 
 ---
 
@@ -18,7 +21,7 @@ com e-mail e senha do VTN Hub. Ninguém escolhe pasta, ninguém entra no OneDriv
 |---|---|---|
 | Programa (código) | GitHub: repositório `vtn-hub` | HTML + CSS + JavaScript puro. Sem build, sem dependências para instalar. |
 | Servidor | `rotinas\servidor.ps1` no Windows do Victor (`http://localhost:8737`) | Liga com o Windows (tarefa "Servidor", escondida). Entrega o app, confere login e papel **no próprio servidor**, lê/grava a pasta do banco. A cada 30 min baixa a versão nova do GitHub. Nada é apagado: "excluir" move para `lixeira\`. |
-| Endereço da internet | Tailscale Funnel (`rotinas\ligar_internet.ps1`) | https público → porta 8737 do computador do Victor. Desligar: `tailscale funnel --https=443 off`. |
+| Endereço da internet | túnel da Cloudflare (`rotinas\tunel.ps1`, aberto pelo servidor) | `https://<nome>.trycloudflare.com` → porta 8737 do PC; endereço publicado no GitHub para o app achar. O servidor só aceita chamadas do site do GitHub Pages e do próprio PC (CORS). |
 | Site no GitHub Pages | `https://victor-bertoni.github.io/vtn-hub/` | Cópia do código; abre o **modo consulta** (ver seção 6). |
 | App no computador | "Instalar" pelo Edge/Chrome (PWA) | Ícone na área de trabalho, janela própria, funciona sem internet (última versão guardada). |
 | Banco de dados | OneDrive: `00_VTN\BANCO DE DADOS` | Pasta compartilhada; cada "documento" é um arquivo `.json`. O OneDrive sincroniza entre os computadores. |
@@ -145,11 +148,10 @@ Regras para quem for alterar:
 
 ## 8. Instalação
 
-**Computador do Victor (uma vez):** rodar `rotinas\instalar_rotinas.ps1`. No fim ele instala o Tailscale,
-abre o navegador para o Victor entrar (conta Google serve), e mostra o endereço da equipe. Na primeira vez
-o Tailscale pode mostrar um link para "habilitar Funnel": abrir, confirmar, rodar `ligar_internet.ps1` de novo.
+**Computador do Victor (uma vez):** rodar `INSTALAR VTN HUB` (área de trabalho) ou `rotinas\instalar_rotinas.ps1`.
+No fim ele roda `ligar_copia_github.ps1`, que pede o token do GitHub (publica endereço + cópia). O túnel abre sozinho.
 
-**Demais pessoas:** abrir o endereço, entrar com e-mail e senha do VTN Hub (conta nova: "Criar conta",
+**Demais pessoas:** abrir https://victor-bertoni.github.io/vtn-hub/ (ou instalar o APK), entrar com e-mail e senha do VTN Hub (conta nova: "Criar conta",
 Victor ou Ismael aprovam). No computador, "Instalar VTN Hub" no menu do navegador cria o ícone.
 
 **Se o computador do Victor for trocado:** instalar OneDrive, copiar `Desktop\VTN_Gestao`, rodar o instalador.

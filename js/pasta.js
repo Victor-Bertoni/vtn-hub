@@ -89,9 +89,9 @@
     f.innerHTML = `Modo consulta: o computador do Victor está desligado. Dados de <b>${quando}</b>. Alterações viram pedidos e são enviadas quando ele ligar. <a href="#" id="fcTenta" style="color:#1c1917">Tentar conectar</a>`;
     document.body.appendChild(f); document.body.style.paddingTop = f.offsetHeight + 'px';
     f.querySelector('#fcTenta').onclick = e => { e.preventDefault(); location.reload(); };
-    if (!/github\.io$/.test(location.hostname)) setInterval(async () => {   // servidor voltou? avisa
-      try { const r = await fetch('api/info', { cache: 'no-store' }); if (r.ok && (await r.json()).ok) { f.style.background = '#22c55e'; f.innerHTML = 'O computador do Victor voltou. <a href="#" style="color:#052e16" onclick="location.reload();return false">Toque para atualizar</a>'; } } catch (e) {}
-    }, 60000);
+    setInterval(async () => {   // servidor voltou? avisa
+      try { if ((await acharServidor()) !== null) { f.style.background = '#22c55e'; f.innerHTML = 'O computador do Victor voltou. <a href="#" style="color:#052e16" onclick="location.reload();return false">Toque para atualizar</a>'; } } catch (e) {}
+    }, 120000);
   }
   function telaCopia(msg) {
     const el = tela(`<h2 style="margin:6px 0">Modo consulta</h2><p style="color:#475569;font-size:14px">O computador do Victor está desligado ou sem internet. Entre com seu e-mail e senha do VTN Hub para ver a última cópia dos dados.</p>${msg ? `<p style="color:#b91c1c;font-size:13px">${msg}</p>` : ''}
@@ -114,10 +114,33 @@
       entrarCopia();
     };
   }
+  /* ---------- onde está o servidor? ----------
+     1) o próprio endereço (app aberto pelo PC: localhost)  2) o endereço do túnel publicado no GitHub
+     (o PC abre um túnel da Cloudflare e publica o endereço atual; o site e o APK acham sozinhos) */
+  let BASE = '';
+  const ENDERECO_API = 'https://api.github.com/repos/Victor-Bertoni/vtn-hub/contents/endereco.json?ref=consulta';
+  const ENDERECO_RAW = 'https://raw.githubusercontent.com/Victor-Bertoni/vtn-hub/consulta/endereco.json';
+  async function testarServidor(u) {
+    const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
+    try { const r = await fetch(u + 'api/info', { cache: 'no-store', signal: c.signal }); return r.ok && !!(await r.json()).ok; } catch (e) { return false; } finally { clearTimeout(t); }
+  }
+  async function enderecoPublicado() {
+    try { const r = await fetch(ENDERECO_API, { cache: 'no-store', headers: { Accept: 'application/vnd.github.raw+json' } }); if (r.ok) return (await r.json()).url || ''; } catch (e) {}
+    try { const r = await fetch(ENDERECO_RAW + '?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) return (await r.json()).url || ''; } catch (e) {}
+    return '';
+  }
+  async function acharServidor() {
+    if (await testarServidor('')) return '';
+    let ult = ''; try { ult = localStorage.getItem('vtn_srv_url') || ''; } catch (e) {}
+    if (ult && await testarServidor(ult)) return ult;
+    const pub = await enderecoPublicado();
+    if (pub && pub !== ult && await testarServidor(pub)) { try { localStorage.setItem('vtn_srv_url', pub); } catch (e) {} return pub; }
+    return null;
+  }
   let token = ''; try { token = localStorage.getItem(LST) || ''; } catch (e) {}
   let expirou = false;
   const api = async (rota, opc = {}) => {
-    const r = await fetch('api/' + rota, Object.assign({ cache: 'no-store' }, opc, { headers: Object.assign({ 'X-VTN-Token': token }, opc.headers || {}) }));
+    const r = await fetch(BASE + 'api/' + rota, Object.assign({ cache: 'no-store' }, opc, { headers: Object.assign({ 'X-VTN-Token': token }, opc.headers || {}) }));
     if (r.status === 401 && modo === 'http' && token && !expirou) { expirou = true; try { localStorage.removeItem(LST); localStorage.removeItem('vtn_session'); } catch (e) {} alert('Sua sessão no VTN Hub expirou. Entre de novo.'); location.reload(); }
     return r;
   };
@@ -173,7 +196,7 @@
     el.querySelector('#lgF').onsubmit = async e => {
       e.preventDefault(); const bt = el.querySelector('#lgOk'); bt.disabled = true; bt.textContent = 'Entrando…';
       try {
-        const r = await fetch('api/login', { method: 'POST', body: JSON.stringify({ email: el.querySelector('#lgE').value, senha: el.querySelector('#lgS').value }) }); const j = await r.json();
+        const r = await fetch(BASE + 'api/login', { method: 'POST', body: JSON.stringify({ email: el.querySelector('#lgE').value, senha: el.querySelector('#lgS').value }) }); const j = await r.json();
         if (!j.ok) return telaLogin(j.erro || 'Não foi possível entrar.');
         token = j.token; meuId = j.id; try { localStorage.setItem(LST, token); localStorage.setItem('vtn_session', j.id); localStorage.setItem('vtn_srv_id', j.id); } catch (er) {}
         fechar(); modo = 'http'; nomePasta = 'servidor da VTN'; prontoRes(true); enviarSaida();
@@ -191,10 +214,10 @@
       try { await pedidoAnonimo({ tipo: 'senha', autorNome: em, email: em, resumo: ['Pedido de nova senha: ' + em] }); telaLogin('Pedido enviado. Victor ou Ismael vão gerar uma senha temporária para você.'); } catch (er) { alert('Não foi possível enviar agora.'); } };
   }
   async function iniciar() {
-    try {   // o app está sendo servido pelo servidor da VTN?
-      const r = await fetch('api/info', { cache: 'no-store' });
-      if (r.ok && (await r.json()).ok) {
-        modo = 'http'; nomePasta = 'servidor da VTN';
+    try {   // acha o servidor da VTN (no próprio PC ou pelo túnel publicado no GitHub)
+      const achado = await acharServidor();
+      if (achado !== null) {
+        BASE = achado; modo = 'http'; nomePasta = 'servidor da VTN';
         if (token && (await api('lista?p=sistema')).ok) { try { meuId = localStorage.getItem('vtn_srv_id') || meuId; } catch (e) {} prontoRes(true); enviarSaida(); return; }
         try { localStorage.removeItem('vtn_session'); } catch (e) {}
         telaLogin(); return;

@@ -8,7 +8,7 @@
 . (Join-Path $PSScriptRoot 'copia.ps1')
 
 Write-Host ''
-Write-Host 'CÓPIA DE CONSULTA DO VTN HUB (para quando este computador estiver desligado)' -ForegroundColor Cyan
+Write-Host 'PUBLICAÇÃO NO GITHUB: endereço para a equipe + cópia de consulta (para quando este computador estiver desligado)' -ForegroundColor Cyan
 Write-Host ''
 Write-Host 'Vai abrir a página do GitHub para criar uma chave de acesso (token). Preencha assim:'
 Write-Host '  1. Token name: VTN Hub copia'
@@ -38,7 +38,8 @@ try {
   Escrever-Log 'Cópia de consulta ligada e publicada no GitHub'
   $n = (Ler-ChavesUsuarios).Count
   Write-Host ''
-  Write-Host 'PRONTO. A cópia de consulta está ligada.' -ForegroundColor Green
+  Write-Host 'PRONTO. Endereço e cópia de consulta ligados.' -ForegroundColor Green
+  Write-Host 'A equipe usa: https://victor-bertoni.github.io/vtn-hub/  (no celular, o app VTN Hub com esse mesmo endereço)' -ForegroundColor Green
   Write-Host 'O servidor atualiza a cópia sozinho (alguns minutos depois de cada alteração).'
   Write-Host "Pessoas que já podem abrir a cópia: $n. Cada pessoa passa a poder abrir depois de entrar uma vez no VTN Hub com este computador ligado."
 } catch { Write-Host "Não foi possível publicar agora: $($_.Exception.Message)" -ForegroundColor Red }

@@ -9,8 +9,8 @@
 #  "Executar assim que possível": se o computador estava desligado
 #  no horário, a rotina roda quando ele ligar.
 #  Também cria o atalho "VTN Hub" na área de trabalho e no menu Iniciar
-#  e, no fim, liga o endereço da internet para a equipe (ligar_internet.ps1)
-#  e a cópia de consulta no GitHub (ligar_copia_github.ps1).
+#  e, no fim, liga a publicação no GitHub (ligar_copia_github.ps1): endereço do túnel
+#  da Cloudflare (aberto pelo servidor, sem conta) e cópia de consulta.
 # =========================================================
 $ErrorActionPreference = 'Stop'
 $aqui = $PSScriptRoot
@@ -66,9 +66,5 @@ Write-Host 'Rodando o primeiro backup agora...'
 & (Join-Path $aqui 'backup_diario.ps1')
 
 Write-Host ''
-Write-Host 'Agora, o endereço da internet para a equipe:'
-& (Join-Path $aqui 'ligar_internet.ps1')
-
-Write-Host ''
-Write-Host 'Por fim, a cópia de consulta (para quando este computador estiver desligado):'
+Write-Host 'Por fim, ligar a publicação no GitHub (endereço da internet + cópia para quando este computador estiver desligado):'
 & (Join-Path $aqui 'ligar_copia_github.ps1')
