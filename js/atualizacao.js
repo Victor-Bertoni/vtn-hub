@@ -43,7 +43,17 @@ window.Atualizacao = (() => {
   }
 
   /* ---- aviso de versão nova ---- */
+  const K_TENT = 'vtn_upd_tentado';
+  // já está na versão (ou acima) que motivou a última atualização: limpa
+  try { const t = ls.get(K_TENT); if (t && t <= CONFIG.APP_VERSION) ls.del(K_TENT); } catch (e) {}
   function aviso(info) {
+    // já recarregou para esta versão e ainda veio a antiga (cópia em cache): não insiste com a mensagem;
+    // tenta de novo em silêncio uma vez por sessão
+    if (ls.get(K_TENT) === info.versao) {
+      let ja = false; try { ja = sessionStorage.getItem(K_TENT) === info.versao; sessionStorage.setItem(K_TENT, info.versao); } catch (e) {}
+      if (!ja && !document.querySelector('.modal-bg')) { alvo = info.versao; setTimeout(() => atualizar(false), 1500); }
+      return;
+    }
     alvo = info.versao; prazo = (info.publicadoEm ? new Date(info.publicadoEm).getTime() : Date.now()) + (info.prazoMin || PRAZO_MIN) * 60e3;
     let bar = document.getElementById('updBar');
     if (!bar) { bar = document.createElement('div'); bar.id = 'updBar'; bar.className = 'upd-bar'; document.body.appendChild(bar); }
@@ -58,7 +68,10 @@ window.Atualizacao = (() => {
   async function atualizar(automatico) {
     if (automatico && document.querySelector('.modal-bg')) { prazo = Date.now() + 5 * 60e3; UI.toast('Atualização adiada 5 min porque há um formulário aberto.'); return; }
     lembrar(); rascunho();
+    if (alvo) ls.set(K_TENT, alvo);
+    const bar = document.getElementById('updBar'); if (bar) bar.remove();   // a mensagem some na hora
     try { if (window.Cloud && Cloud.ativo && Cloud.flush) await Cloud.flush(); } catch (e) {}
+    try { const rs = await navigator.serviceWorker?.getRegistrations?.(); for (const r of rs || []) await r.update(); } catch (e) {}
     location.reload();
   }
 
