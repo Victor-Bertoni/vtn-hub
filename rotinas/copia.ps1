@@ -99,7 +99,7 @@ function Montar-Copia([string]$banco, $usuariosAtivos) {
 # usuários do banco (pastas vtn\usuarios__*.json), para incluir na cópia só quem está ativo
 function Usuarios-Ativos {
   $us = @()
-  Get-ChildItem -LiteralPath (Join-Path $Banco 'vtn') -Filter 'usuarios__*.json' -ErrorAction SilentlyContinue | ForEach-Object { $us += @((Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json).json | ConvertFrom-Json) }
+  Get-ChildItem -LiteralPath (Join-Path $Banco 'vtn') -Filter 'usuarios__*.json' -ErrorAction SilentlyContinue | ForEach-Object { foreach ($x in ((Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json).json | ConvertFrom-Json)) { $us += $x } }
   return $us
 }
 function Token-GitHub { $b = Protegido-Ler $ArqToken; if ($b) { return $utf8sb.GetString($b) } else { return $null } }

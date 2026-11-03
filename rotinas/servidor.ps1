@@ -53,7 +53,7 @@ function Usuarios {
   if ($script:cacheUs -and ((Get-Date) - $script:cacheUsEm).TotalSeconds -lt 5) { return $script:cacheUs }
   $lista = @()
   Get-ChildItem -LiteralPath (Join-Path $Banco 'vtn') -Filter 'usuarios__*.json' -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {
-    $d = Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json; $lista += @($d.json | ConvertFrom-Json) }
+    $d = Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json; foreach ($x in ($d.json | ConvertFrom-Json)) { $lista += $x } }   # foreach: no PowerShell 5.1 a lista vem como um item só
   # senha trocada por quem não é administrador (senhas\<conta>.json) vale se for mais nova
   $senhas = @(Get-ChildItem -LiteralPath (Join-Path $Banco 'senhas') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json })
   foreach ($u in $lista) {
