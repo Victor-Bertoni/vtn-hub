@@ -10,6 +10,8 @@
 # =========================================================
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'config.ps1')
+. (Join-Path $PSScriptRoot 'copia.ps1')   # cópia de consulta no GitHub (PC desligado)
+$ultimaGravacao = [datetime]::MinValue; $ultimoEnvio = [datetime]::MinValue; $copiaPendente = $true
 $Porta = 8737
 $utf8 = New-Object Text.UTF8Encoding $false
 $tipos = @{ '.html'='text/html; charset=utf-8'; '.js'='text/javascript; charset=utf-8'; '.css'='text/css; charset=utf-8'; '.json'='application/json; charset=utf-8';
@@ -110,6 +112,7 @@ function Atualizar-Programa {
       New-Item -ItemType Directory -Force -Path $Programa | Out-Null
       Copy-Item -Recurse -Force (Join-Path $raiz.FullName '*') $Programa
       Escrever-Log "Programa atualizado do GitHub para a versão $($remoto.versao)"
+      if ($script:l -and $script:l.IsListening) { Escrever-Log 'Reiniciando o servidor com a versão nova'; $script:l.Stop(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""; exit }
     }
   } catch { }
 }
@@ -130,6 +133,13 @@ while ($l.IsListening) {
   $tarefa = $l.GetContextAsync()
   while (-not $tarefa.AsyncWaitHandle.WaitOne(1000)) {
     if (((Get-Date) - $ultimaConferencia).TotalMinutes -ge 30) { $ultimaConferencia = Get-Date; Atualizar-Programa }
+    # cópia de consulta: 2 min depois da última alteração (no máximo a cada 5 min) e, de todo jeito, a cada 6 h
+    $agora = Get-Date
+    if ((($copiaPendente -or $ultimaGravacao -gt $ultimoEnvio) -and ($agora - $ultimaGravacao).TotalMinutes -ge 2 -and ($agora - $ultimoEnvio).TotalMinutes -ge 5) -or ($agora - $ultimoEnvio).TotalHours -ge 6) {
+      $ultimoEnvio = $agora
+      try { $r = Publicar-Copia $Banco (Usuarios) $Repo; if ($r -eq 'ok') { $copiaPendente = $false; Escrever-Log 'Cópia de consulta publicada no GitHub' } }
+      catch { Escrever-Log "Aviso: cópia de consulta não publicada: $($_.Exception.Message)" }
+    }
   }
   $ctx = $tarefa.Result; $req = $ctx.Request
   try {
@@ -142,6 +152,7 @@ while ($l.IsListening) {
         $tok = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
         $sessoes[$tok] = @{ id = $u.id; nome = $u.nome; papel = $u.papel; validade = (Get-Date).AddDays(30) }
         Gravar-Sessoes; Escrever-Log "Login: $($u.nome)"
+        try { if (Registrar-ChaveUsuario $u "$($c.senha)") { $copiaPendente = $true } } catch { Escrever-Log "Aviso: chave da cópia de $($u.nome): $($_.Exception.Message)" }
         Json $ctx @{ ok = $true; token = $tok; id = $u.id; nome = $u.nome; papel = $u.papel }
       } else { Start-Sleep -Milliseconds 800; Json $ctx @{ ok = $false; erro = 'E-mail ou senha inválidos (ou conta aguardando aprovação).' } 401 }
       continue
@@ -164,6 +175,7 @@ while ($l.IsListening) {
       if ($dir -and (Test-Path $dir)) { $itens = @(Get-ChildItem -LiteralPath $dir -File -Filter '*.json' | Where-Object { $_.Name -notlike '~*' } | ForEach-Object { @{ id = $_.BaseName; mod = [int64]($_.LastWriteTimeUtc - [datetime]'1970-01-01').TotalMilliseconds } }) }
       Json $ctx @{ itens = $itens }; continue
     }
+    if ($req.HttpMethod -ne 'GET' -and $rota -like '/api/*' -and $rota -ne '/api/login' -and $rota -ne '/api/sair') { $ultimaGravacao = Get-Date }
     if ($rota -eq '/api/doc') {
       $dir = Caminho-Seguro $Banco $q['p']; $id = $q['id']
       if (-not $dir -or -not $id -or $id -match '[\\/:]') { Json $ctx @{ erro = 'caminho' } 400; continue }

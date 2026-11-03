@@ -282,7 +282,7 @@ window.Cloud = (() => {
 
   /* depois do login: papel "Somente visualização" no app bloqueia edição mesmo para quem pode gravar no banco */
   api.aplicarPapel = function (u) {
-    if (window.VTN_PASTA) api.dbEditor = !!u && u.papel === 'admin';   // pasta do OneDrive: o papel no app decide
+    if (window.VTN_PASTA) api.dbEditor = !!u && u.papel === 'admin' && !VTN_PASTA.copia;   // modo consulta: tudo vira pedido   // pasta do OneDrive: o papel no app decide
     api.podeEditar = api.dbEditor && !!u && u.papel === 'admin';   // só Victor e Ismael alteram direto
     document.documentElement.classList.toggle('somente-leitura', !api.podeEditar);
   };

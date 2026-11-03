@@ -20,6 +20,78 @@
   let raiz = null, prontoRes, nomePasta = '', modo = 'pasta', meuId = '';
   const LST = 'vtn_token';
   const APK = 'https://github.com/Victor-Bertoni/vtn-hub/releases/download/android/VTN-Hub.apk';
+  /* ---------- cópia de consulta (PC do Victor desligado) ----------
+     O servidor publica no GitHub (ramo "consulta") o banco criptografado (AES + HMAC).
+     A chave só abre com o e-mail e a senha de cada pessoa no VTN Hub (PBKDF2). */
+  const COPIA_URL = 'https://raw.githubusercontent.com/Victor-Bertoni/vtn-hub/consulta/dados.json';
+  const SAIDA = 'vtn_saida', COPIA_CACHE = 'vtn_copia_enc';
+  let copia = null;   // { docs: { vtn: {id: data}, sistema: {...} }, geradoEm }
+  const b64 = t => Uint8Array.from(atob(t), c => c.charCodeAt(0));
+  const junta = (a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r; };
+  async function sha256hex(t) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map(x => x.toString(16).padStart(2, '0')).join(''); }
+  async function derivar(senha, salt, iter) {
+    const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(senha), 'PBKDF2', false, ['deriveBits']);
+    return new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter }, k, 512));
+  }
+  async function abrirCaixa(k64, c) {   // {iv, ct, mac} em base64; k64 = 32 bytes AES + 32 bytes HMAC
+    const iv = b64(c.iv), ct = b64(c.ct);
+    const hk = await crypto.subtle.importKey('raw', k64.slice(32), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    if (!(await crypto.subtle.verify('HMAC', hk, b64(c.mac), junta(iv, ct)))) throw new Error('senha');
+    const ak = await crypto.subtle.importKey('raw', k64.slice(0, 32), 'AES-CBC', false, ['decrypt']);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, ak, ct));
+  }
+  async function abrirCopia(email, senha) {
+    let txt = '';
+    try { const r = await fetch(COPIA_URL + '?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) { txt = await r.text(); try { localStorage.setItem(COPIA_CACHE, txt); } catch (e) {} } } catch (e) {}
+    if (!txt) { try { txt = localStorage.getItem(COPIA_CACHE) || ''; } catch (e) {} }   // sem internet: última cópia guardada neste aparelho
+    if (!txt) throw new Error('sem copia');
+    const pac = JSON.parse(txt);
+    const ch = pac.chaves[await sha256hex('vtn:' + email.trim().toLowerCase())];
+    if (!ch) throw new Error('sem chave');
+    const dk = await abrirCaixa(await derivar(senha, b64(ch.salt), pac.iter), ch);
+    let bruto = await abrirCaixa(dk, pac.dados);
+    bruto = new Uint8Array(await new Response(new Blob([bruto]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+    return { docs: JSON.parse(new TextDecoder().decode(bruto)), geradoEm: pac.geradoEm };
+  }
+  const saida = () => { try { return JSON.parse(localStorage.getItem(SAIDA) || '[]'); } catch (e) { return []; } };
+  async function enviarSaida() {   // pedidos feitos com o PC desligado: entram quando o servidor volta
+    const L = saida(); if (!L.length) return; const resto = [];
+    for (const x of L) { try { const r = await api('doc?p=' + encodeURIComponent(x.col) + '&id=' + encodeURIComponent(x.id), { method: 'PUT', body: JSON.stringify(x.data) }); if (!r.ok) resto.push(x); } catch (e) { resto.push(x); } }
+    try { localStorage.setItem(SAIDA, JSON.stringify(resto)); } catch (e) {}
+    const n = L.length - resto.length; if (n) setTimeout(() => { try { UI.toast(n + ' pedido(s) feitos com o computador desligado foram enviados aos administradores'); } catch (e) {} }, 4000);
+  }
+  function faixaCopia() {
+    const quando = copia && copia.geradoEm ? new Date(copia.geradoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '?';
+    const f = document.createElement('div'); f.id = 'faixaCopia';
+    f.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;background:#f59e0b;color:#1c1917;font:600 12px/1.35 Inter,system-ui,sans-serif;padding:6px 12px;text-align:center';
+    f.innerHTML = `Modo consulta: o computador do Victor está desligado. Dados de ${quando}. Alterações viram pedidos e são enviadas quando ele ligar. <a href="#" id="fcTenta" style="color:#1c1917">Tentar conectar</a>`;
+    document.body.appendChild(f); document.body.style.paddingTop = f.offsetHeight + 'px';
+    f.querySelector('#fcTenta').onclick = e => { e.preventDefault(); location.reload(); };
+    if (!/github\.io$/.test(location.hostname)) setInterval(async () => {   // servidor voltou? avisa
+      try { const r = await fetch('api/info', { cache: 'no-store' }); if (r.ok && (await r.json()).ok) { f.style.background = '#22c55e'; f.innerHTML = 'O computador do Victor voltou. <a href="#" style="color:#052e16" onclick="location.reload();return false">Toque para atualizar</a>'; } } catch (e) {}
+    }, 60000);
+  }
+  function telaCopia(msg) {
+    const el = tela(`<h2 style="margin:6px 0">Modo consulta</h2><p style="color:#475569;font-size:14px">O computador do Victor está desligado ou sem internet. Entre com seu e-mail e senha do VTN Hub para ver a última cópia dos dados.</p>${msg ? `<p style="color:#b91c1c;font-size:13px">${msg}</p>` : ''}
+      <form id="cpF" style="display:grid;gap:10px"><input id="cpE" type="email" placeholder="E-mail" required autocomplete="username" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
+      <input id="cpS" type="password" placeholder="Senha" required autocomplete="current-password" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
+      <button id="cpOk" type="submit" style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px;font-weight:700;cursor:pointer">Abrir cópia</button></form>
+      <div style="display:flex;justify-content:space-between;gap:10px;margin-top:12px;font-size:13px"><a href="#" id="cpTenta">Tentar conectar de novo</a>${window.VTNAndroid ? '<a href="#" id="cpEnd">Trocar o endereço</a>' : (suportado && /github\.io$/.test(location.hostname) ? '<a href="#" id="cpPasta">Usar a pasta do OneDrive</a>' : '')}</div>`);
+    el.querySelector('#cpTenta').onclick = e => { e.preventDefault(); location.reload(); };
+    const ce = el.querySelector('#cpEnd'); if (ce) ce.onclick = e => { e.preventDefault(); window.VTNAndroid.trocarEndereco(); };
+    const cp = el.querySelector('#cpPasta'); if (cp) cp.onclick = e => { e.preventDefault(); modoPasta(); };
+    el.querySelector('#cpF').onsubmit = async e => {
+      e.preventDefault(); const bt = el.querySelector('#cpOk'); bt.disabled = true; bt.textContent = 'Abrindo…';
+      const email = el.querySelector('#cpE').value, senha = el.querySelector('#cpS').value;
+      try { copia = await abrirCopia(email, senha); }
+      catch (er) { return telaCopia(er.message === 'sem copia' ? 'Ainda não há cópia publicada (ou sem internet).' : er.message === 'sem chave' ? 'Este e-mail ainda não tem cópia: entre uma vez no VTN Hub com o computador do Victor ligado.' : 'E-mail ou senha inválidos.'); }
+      const us = Object.keys(copia.docs.vtn || {}).filter(k => k.startsWith('usuarios__')).flatMap(k => { try { return JSON.parse(copia.docs.vtn[k].json); } catch (x) { return []; } });
+      const u = us.find(x => (x.email || '').toLowerCase() === email.trim().toLowerCase());
+      if (!u) return telaCopia('Conta não encontrada na cópia.');
+      meuId = u.id; try { localStorage.setItem('vtn_session', u.id); localStorage.setItem('vtn_srv_id', u.id); } catch (er) {}
+      modo = 'copia'; nomePasta = 'cópia de consulta'; fechar(); faixaCopia(); prontoRes(true);
+    };
+  }
   let token = ''; try { token = localStorage.getItem(LST) || ''; } catch (e) {}
   let expirou = false;
   const api = async (rota, opc = {}) => {
@@ -28,7 +100,7 @@
     return r;
   };
   const pronto = new Promise(r => { prontoRes = r; });
-  window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, trocar: () => escolher(true), suportado, get servidor() { return modo === 'http'; },
+  window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, trocar: () => escolher(true), suportado, get servidor() { return modo === 'http'; }, get copia() { return modo === 'copia'; },
     sair() { try { api('sair'); localStorage.removeItem(LST); } catch (e) {} },
     async abrir(caminho) {   // abre um arquivo da pasta (ex.: cub\tabela.pdf)
       await pronto;
@@ -82,7 +154,7 @@
         const r = await fetch('api/login', { method: 'POST', body: JSON.stringify({ email: el.querySelector('#lgE').value, senha: el.querySelector('#lgS').value }) }); const j = await r.json();
         if (!j.ok) return telaLogin(j.erro || 'Não foi possível entrar.');
         token = j.token; meuId = j.id; try { localStorage.setItem(LST, token); localStorage.setItem('vtn_session', j.id); localStorage.setItem('vtn_srv_id', j.id); } catch (er) {}
-        fechar(); modo = 'http'; nomePasta = 'servidor da VTN'; prontoRes(true);
+        fechar(); modo = 'http'; nomePasta = 'servidor da VTN'; prontoRes(true); enviarSaida();
       } catch (er) { telaLogin('O computador servidor da VTN não respondeu. Ele precisa estar ligado.'); }
     };
     el.querySelector('#lgCriar').onclick = e => { e.preventDefault(); const b = el.querySelector('#lgBox');
@@ -101,20 +173,15 @@
       const r = await fetch('api/info', { cache: 'no-store' });
       if (r.ok && (await r.json()).ok) {
         modo = 'http'; nomePasta = 'servidor da VTN';
-        if (token && (await api('lista?p=sistema')).ok) { try { meuId = localStorage.getItem('vtn_srv_id') || meuId; } catch (e) {} prontoRes(true); return; }
+        if (token && (await api('lista?p=sistema')).ok) { try { meuId = localStorage.getItem('vtn_srv_id') || meuId; } catch (e) {} prontoRes(true); enviarSaida(); return; }
         try { localStorage.removeItem('vtn_session'); } catch (e) {}
         telaLogin(); return;
       }
     } catch (e) {}
-    if (window.VTNAndroid) {   // app do celular sem resposta do servidor
-      const el = tela(`<h2 style="margin:6px 0">Sem conexão com o VTN Hub</h2><p style="color:#475569">O computador do Victor precisa estar ligado e com internet. Confira também a internet do celular.</p>
-        <button id="pastaOk" style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:700;width:100%">Tentar de novo</button>
-        <button id="pastaOutra" style="background:none;border:0;color:#2563eb;margin-top:10px;width:100%">Trocar o endereço</button>`);
-      el.querySelector('#pastaOk').onclick = () => location.reload();
-      el.querySelector('#pastaOutra').onclick = () => window.VTNAndroid.trocarEndereco();
-      return;
-    }
     if (/[?&]teste=opfs/.test(location.search) && navigator.storage && navigator.storage.getDirectory) { raiz = await navigator.storage.getDirectory(); nomePasta = 'teste (navegador)'; prontoRes(raiz); return; }   // só para testes automáticos
+    telaCopia();   // sem servidor: cópia de consulta (a pasta do OneDrive fica como opção no site do GitHub)
+  }
+  async function modoPasta() {
     if (!suportado) { tela(`<h2 style="margin:6px 0">Use o Edge ou o Chrome no computador</h2><p style="color:#475569">O VTN Hub guarda os dados na pasta do OneDrive e precisa do Microsoft Edge ou do Google Chrome no Windows para acessá-la.</p>`); return; }
     const h = await lerGuardado();
     if (h) {
@@ -140,17 +207,20 @@
   async function dir(path, criar) { let d = raiz; for (const s of seg(path)) d = await d.getDirectoryHandle(s, { create: !!criar }); return d; }
   const cache = {};   // modo servidor: guarda o último conteúdo de cada documento
   async function lerDoc(col, id) {
+    if (modo === 'copia') { const d = ((copia.docs || {})[col] || {})[id] || (saida().find(x => x.col === col && x.id === id) || {}).data; return d ? { data: d, mod: 1 } : null; }
     if (modo === 'http') { const r = await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id)); if (!r.ok) return null; const t = await r.text(); return { data: t ? JSON.parse(t) : null, mod: +(r.headers.get('X-Mod') || 0) || t.length }; }
     try { const f = await (await (await dir(col)).getFileHandle(id + '.json')).getFile(); const t = await f.text(); return { data: t ? JSON.parse(t) : null, mod: f.lastModified }; }
     catch (e) { return null; }
   }
   async function gravarDoc(col, id, data) {
+    if (modo === 'copia') { if (!/^pedidos(\/|$)/.test(col)) { const e = new Error('modo consulta'); e.code = 'permission_denied'; throw e; } const L = saida().filter(x => !(x.col === col && x.id === id)); L.push({ col, id, data }); try { localStorage.setItem(SAIDA, JSON.stringify(L)); } catch (e) {} return; }
     if (modo === 'http') { const r = await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(data) }); if (!r.ok) { const e = new Error('sem permissão'); e.code = r.status === 403 ? 'permission_denied' : 'erro'; throw e; } return; }
     const d = await dir(col, true); const fh = await d.getFileHandle(id + '.json', { create: true });
     const w = await fh.createWritable(); await w.write(JSON.stringify(data)); await w.close();
   }
-  async function apagarDoc(col, id) { if (modo === 'http') { await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id), { method: 'DELETE' }); return; } try { await (await dir(col)).removeEntry(id + '.json'); } catch (e) {} }
+  async function apagarDoc(col, id) { if (modo === 'copia') return; if (modo === 'http') { await api('doc?p=' + encodeURIComponent(col) + '&id=' + encodeURIComponent(id), { method: 'DELETE' }); return; } try { await (await dir(col)).removeEntry(id + '.json'); } catch (e) {} }
   async function listar(col, limite) {
+    if (modo === 'copia') { const o = Object.assign({}, (copia.docs || {})[col] || {}); saida().filter(x => x.col === col).forEach(x => { o[x.id] = x.data; }); return Object.entries(o).slice(0, limite || 100000).map(([id, data]) => ({ id, data, mod: 1 })); }
     if (modo === 'http') {
       const r = await api('lista?p=' + encodeURIComponent(col)); if (!r.ok) return [];
       const itens = ((await r.json()).itens || []).slice(0, limite || 100000); const out = [];
@@ -227,14 +297,14 @@
   const tipos = {};
   const assets = {
     async upload(blob) {
-      await pronto; const id = 'A' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      await pronto; if (modo === 'copia') throw new Error('Anexos só com o computador do Victor ligado.'); const id = 'A' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       if (modo === 'http') { const r = await api('arquivo?id=' + id, { method: 'PUT', body: blob }); if (!r.ok) throw new Error('envio'); await gravarDoc('arquivos/_tipos', id, { type: blob.type || 'application/octet-stream', size: blob.size }); return { id, url: '', sizeBytes: blob.size, contentType: blob.type }; }
       const d = await dir('arquivos', true); const fh = await d.getFileHandle(id, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close();
       await gravarDoc('arquivos/_tipos', id, { type: blob.type || 'application/octet-stream', size: blob.size });
       return { id, url: '', sizeBytes: blob.size, contentType: blob.type };
     },
     async get(id) {
-      await pronto; if (modo === 'http') { const t = ((await lerDoc('arquivos/_tipos', id)) || {}).data || {}; const r = await api('arquivo?id=' + id + (t.type ? '&tipo=' + encodeURIComponent(t.type) : '')); return r.ok ? r.blob() : null; }
+      await pronto; if (modo === 'copia') return null; if (modo === 'http') { const t = ((await lerDoc('arquivos/_tipos', id)) || {}).data || {}; const r = await api('arquivo?id=' + id + (t.type ? '&tipo=' + encodeURIComponent(t.type) : '')); return r.ok ? r.blob() : null; }
       try { const f = await (await (await dir('arquivos')).getFileHandle(id)).getFile(); const t = tipos[id] || ((await lerDoc('arquivos/_tipos', id)) || {}).data || {}; return new Blob([await f.arrayBuffer()], { type: t.type || f.type || 'application/octet-stream' }); } catch (e) { return null; }
     },
     async url(id) { const b = await assets.get(id); return b ? URL.createObjectURL(b) : ''; },

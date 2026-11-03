@@ -19,7 +19,7 @@ com e-mail e senha do VTN Hub. Ninguém escolhe pasta, ninguém entra no OneDriv
 | Programa (código) | GitHub: repositório `vtn-hub` | HTML + CSS + JavaScript puro. Sem build, sem dependências para instalar. |
 | Servidor | `rotinas\servidor.ps1` no Windows do Victor (`http://localhost:8737`) | Liga com o Windows (tarefa "Servidor", escondida). Entrega o app, confere login e papel **no próprio servidor**, lê/grava a pasta do banco. A cada 30 min baixa a versão nova do GitHub. Nada é apagado: "excluir" move para `lixeira\`. |
 | Endereço da internet | Tailscale Funnel (`rotinas\ligar_internet.ps1`) | https público → porta 8737 do computador do Victor. Desligar: `tailscale funnel --https=443 off`. |
-| Site no GitHub Pages | `https://victor-bertoni.github.io/vtn-hub/` | Cópia do código; sem o servidor ele pede a pasta do banco (modo reserva, só Edge/Chrome no PC). |
+| Site no GitHub Pages | `https://victor-bertoni.github.io/vtn-hub/` | Cópia do código; abre o **modo consulta** (ver seção 6). |
 | App no computador | "Instalar" pelo Edge/Chrome (PWA) | Ícone na área de trabalho, janela própria, funciona sem internet (última versão guardada). |
 | Banco de dados | OneDrive: `00_VTN\BANCO DE DADOS` | Pasta compartilhada; cada "documento" é um arquivo `.json`. O OneDrive sincroniza entre os computadores. |
 | Rotinas | Windows do Victor: Agendador de Tarefas › `VTN Hub` | Scripts PowerShell em `rotinas\` (backup, vigia de leis, CUB). |
@@ -110,7 +110,25 @@ Regras para quem for alterar:
 * Não apagar arquivos da pasta do banco nem backups.
 * Testar abrindo `index.html?teste=opfs` (usa uma pasta de teste do próprio navegador).
 
-## 6. App Android (APK)
+## 6. Computador do Victor desligado: cópia de consulta
+
+* O servidor publica no GitHub, ramo **`consulta`**, o arquivo `dados.json` com o banco (pastas `vtn` e `sistema`)
+  **compactado e criptografado** (AES-256-CBC + HMAC-SHA256). Envia 2 min depois de cada alteração
+  (no máximo a cada 5 min) e a cada 6 h. É sempre um único commit, substituído — o repositório não cresce.
+* A chave dos dados fica só no PC (`%LOCALAPPDATA%\VTN_Hub\chave_consulta.bin`, protegida pelo Windows) e vai
+  "embrulhada" na cópia com a **senha de cada pessoa** (PBKDF2-SHA256, 600 mil rodadas), gerada quando ela
+  entra no VTN Hub com o PC ligado. Ninguém mais abre a cópia; quem for desativado sai da próxima cópia.
+* Quando o servidor não responde, o app mostra **Modo consulta**: e-mail + senha → abre a última cópia
+  (também guardada no aparelho, para abrir sem internet). Faixa laranja no topo. Todos ficam como
+  leitores: alterações viram **pedidos guardados no aparelho** e são enviados sozinhos quando o servidor volta;
+  Victor/Ismael aprovam em Aprovações. Anexos não abrem nesse modo.
+* Ligar (uma vez): `rotinas\ligar_copia_github.ps1` — pede um token do GitHub (fine-grained, só o repositório
+  vtn-hub, Contents: Read and write), guardado protegido pelo Windows em `%LOCALAPPDATA%\VTN_Hub\github_token.bin`.
+  Se o token vencer, rodar de novo. Código: `rotinas\copia.ps1` (PC) e `js/pasta.js` (app).
+* Sincronização manual: com autorização do Victor, uma IA ou pessoa pode rodar `Publicar-Copia` ou mexer nos dados
+  pelo próprio app; nada depende de IA para funcionar.
+
+## 7. App Android (APK)
 
 * Projeto em `android/` (Java puro, sem bibliotecas): uma janela que abre o endereço do VTN Hub.
   Na 1ª vez pede o endereço (colar o que o Victor envia); "Configurações › Trocar endereço do servidor" muda depois.
@@ -125,7 +143,7 @@ Regras para quem for alterar:
   os secrets `VTN_KEYSTORE_B64`/`VTN_KEYSTORE_SENHA` fixam a assinatura (sem eles, cada APK novo exige
   desinstalar o anterior).
 
-## 7. Instalação
+## 8. Instalação
 
 **Computador do Victor (uma vez):** rodar `rotinas\instalar_rotinas.ps1`. No fim ele instala o Tailscale,
 abre o navegador para o Victor entrar (conta Google serve), e mostra o endereço da equipe. Na primeira vez
