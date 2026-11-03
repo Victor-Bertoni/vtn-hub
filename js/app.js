@@ -136,6 +136,8 @@ window.App = (() => {
       box.classList.add('open'); UI.icons();
     });
     document.addEventListener('click', e => { if (!e.target.closest('.search')) box.classList.remove('open'); });
+    // celular: tocar fora do menu lateral fecha o menu
+    document.addEventListener('click', e => { const sb = document.getElementById('sidebar'); if (sb && sb.classList.contains('open') && !sb.contains(e.target) && !e.target.closest('.menu-btn')) { sb.classList.remove('open'); e.preventDefault(); e.stopPropagation(); } }, true);
   }
 
   /* Clique em qualquer ID → abre o detalhe */

@@ -13,13 +13,14 @@ Views.orcamentos = {
     UI.$$('[data-t]', el).forEach(b => b.onclick = () => { s.tab = b.dataset.t; App.refresh(); });
     const c = UI.$('#oc', el);
     if (s.tab === 'lista') {
-      c.innerHTML = `<div class="card">${UI.table([{ h: 'ID', f: o => UI.idLink(o.id) }, { h: 'Título', f: o => `<span class="plink" data-goto="${o.id}">${esc(o.titulo)}</span>` }, { h: 'Cliente', f: o => UI.pessoa(o.clienteId) }, { h: 'Obra', f: o => UI.idLink(o.obraId) },
+      c.innerHTML = `<div class="card">${UI.table([{ h: 'ID', f: o => UI.idLink(o.id) }, { h: 'Título', f: o => `<span class="plink" data-goto="${o.id}">${esc(o.titulo)}</span>` }, { h: 'Cliente', f: o => clientesDe(o).map(UI.pessoa).join(', ') || '—' }, { h: 'Obra', f: o => UI.idLink(o.obraId) },
         { h: 'Data', f: o => date(o.data) }, { h: 'Validade', f: o => date(o.validade) }, { h: 'Itens', num: 1, f: o => (o.itens || []).length }, { h: 'Total', num: 1, f: o => `<b>${money(Calc.orcTotal(o).total)}</b>` }, { h: 'Status', f: o => UI.badge(o.status) }], l, { emptyMsg: 'Nenhum orçamento.' })}</div>`;
     } else this.catalogo(c);
   },
   catalogo(c) {
     const { esc, money, icon } = UI;
-    const cat = Store.all('catalogo'); const grupos = [...new Set(cat.map(x => x.grupo))];
+    const AZ = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
+    const cat = Store.all('catalogo').slice().sort((a, b) => AZ(a.desc, b.desc)); const grupos = [...new Set(cat.map(x => x.grupo))].sort(AZ);
     c.innerHTML = `<div class="toolbar"><button class="btn primary" id="cadd">${icon('plus')} Novo serviço</button><span class="tiny muted">Preencha o valor unitário de cada serviço — ele é usado ao montar orçamentos. (Base: COMPOSIÇÃO_PREÇO_SERVIÇOS.xlsx + 00_GERADOR_ORÇAMENTO_OBRAS_VTN.xlsx + tabela de projetos VTN)</span></div>
       ${grupos.map(g => `<div class="card mb"><div class="card-h"><h3>${esc(g)}</h3></div><div class="table-wrap"><table class="t"><thead><tr><th>Código</th><th>Serviço</th><th>Unidade</th><th class="num">Valor unitário (R$)</th></tr></thead><tbody>
         ${cat.filter(x => x.grupo === g).map(x => `<tr><td><span class="idlink">${x.id}</span></td><td>${esc(x.desc)}</td><td>${esc(x.un)}</td><td class="num"><input class="input" type="number" step="0.01" data-cu="${x.id}" value="${x.unit || 0}" style="width:120px;text-align:right"></td></tr>`).join('')}
@@ -32,19 +33,21 @@ Views.orcamentos = {
   },
   novo(preset = {}) {
     const o = Store.get('obras', preset.obraId);
-    const r = Store.insert('orcamentos', Object.assign({ titulo: o ? 'Orçamento – ' + o.nome : 'Novo orçamento', data: UI.today(), validade: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), status: 'Rascunho', itens: [], bdi: 0, imposto: Store.db.empresa.imposto ?? CONFIG.impostoPadrao, desconto: 0, clienteId: o ? (o.clienteIds || [])[0] : '', condicoes: '', obs: '' }, preset));
+    const r = Store.insert('orcamentos', Object.assign({ titulo: o ? 'Orçamento – ' + o.nome : 'Novo orçamento', data: UI.today(), validade: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), status: 'Rascunho', itens: [], bdi: 0, imposto: Store.db.empresa.imposto ?? CONFIG.impostoPadrao, desconto: 0, clienteId: o ? (o.clienteIds || [])[0] || '' : '', clienteIds: o ? (o.clienteIds || []).slice() : [], condicoes: '', obs: '' }, preset));
     this.editor(r.id);
   },
   editor(id) {
     const { esc, icon, money } = UI;
     const o = JSON.parse(JSON.stringify(Store.get('orcamentos', id)));
-    const cat = Store.all('catalogo');
+    o.clienteIds = clientesDe(o).slice();
+    const AZ = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
+    const cat = Store.all('catalogo').slice().sort((a, b) => AZ(a.desc, b.desc));
     const m = UI.modal({ title: `Orçamento ${id}`, wide: true, body: `<div id="ob"></div>`,
-      footer: `<button class="btn danger" data-del style="margin-right:auto">${icon('trash-2')}</button><button class="btn" data-pr>${icon('printer')} Imprimir / PDF</button><button class="btn" data-pp>${icon('send')} Proposta VTN</button><button class="btn" data-ct>${icon('file-signature')} Gerar contrato</button><button class="btn" data-ob>${icon('hard-hat')} Criar obra</button><button class="btn primary" data-sv>${icon('save')} Salvar</button>` });
+      footer: `<button class="btn danger" data-del style="margin-right:auto">${icon('trash-2')}</button><button class="btn" data-pr>${icon('printer')} Imprimir / PDF</button><button class="btn" data-so title="Grava o PDF na pasta COMERCIAL da obra (OneDrive › 00_SERVIÇOS)">${icon('folder-input')} Salvar na pasta da obra</button><button class="btn" data-pp>${icon('send')} Proposta VTN</button><button class="btn" data-ct>${icon('file-signature')} Gerar contrato</button><button class="btn" data-ob>${icon('hard-hat')} Criar obra</button><button class="btn primary" data-sv>${icon('save')} Salvar</button>` });
     const body = m.$('#ob');
     const draw = () => {
       const t = Calc.orcTotal(o);
-      body.innerHTML = UI.fields([{ k: 'titulo', l: 'Título', full: 1 }, { k: 'clienteId', l: 'Cliente', t: 'select', o: () => Store.all('pessoas').map(p => [p.id, p.nome]) },
+      body.innerHTML = UI.fields([{ k: 'titulo', l: 'Título', full: 1 }, { k: 'clienteIds', l: 'Cliente(s) — vêm da obra · Ctrl+clique para mais de um', t: 'multi', o: () => Store.all('pessoas').slice().sort((a, b) => AZ(a.nome, b.nome)).map(p => [p.id, p.nome]) },
         { k: 'obraId', l: 'Obra', t: 'select', o: () => Store.all('obras').map(x => [x.id, x.id + ' · ' + x.nome]) }, { k: 'data', l: 'Data', t: 'date' }, { k: 'validade', l: 'Validade', t: 'date' },
         { k: 'status', l: 'Status', t: 'select', o: LISTAS.statusOrc }], o) +
         `<h3 class="mt2 mb">Itens</h3><div class="table-wrap"><table class="t"><thead><tr><th>Descrição</th><th>Un.</th><th class="num">Qtd</th><th class="num">Unitário</th><th class="num">Total</th><th></th></tr></thead><tbody>
@@ -52,7 +55,7 @@ Views.orcamentos = {
           <td class="num"><input class="input" type="number" step="any" data-i="${k}" data-f="qtd" value="${i.qtd}" style="width:80px;text-align:right"></td><td class="num"><input class="input" type="number" step="any" data-i="${k}" data-f="unit" value="${i.unit}" style="width:110px;text-align:right"></td>
           <td class="num"><b>${money(i.qtd * i.unit)}</b></td><td><button class="btn ghost sm" data-rm="${k}">${icon('x')}</button></td></tr>`).join('')}
         </tbody></table></div>
-        <div class="row mt"><select class="select" id="catsel" style="flex:1;min-width:240px"><option value="">+ Adicionar do catálogo de preços…</option>${[...new Set(cat.map(c => c.grupo))].map(g => `<optgroup label="${esc(g)}">${cat.filter(c => c.grupo === g).map(c => `<option value="${c.id}">${esc(c.desc)} (${esc(c.un)}${c.unit ? ' · ' + money(c.unit) : ''})</option>`).join('')}</optgroup>`).join('')}</select><select class="select" id="compsel" style="flex:1;min-width:240px"><option value="">+ Adicionar composição (mão de obra + materiais)…</option>${(() => { const D = window.Comp ? Comp.dados() : { composicoes: [] }; return [...new Set(D.composicoes.map(c => c.grupo))].map(g => `<optgroup label="${esc(g)}">${D.composicoes.filter(c => c.grupo === g).map(c => `<option value="${c.id}">${esc(c.nome)} (${esc(c.un)} · ${money(Comp.custo(c, D.insumos).total)})</option>`).join('')}</optgroup>`).join(''); })()}</select>
+        <div class="row mt"><select class="select" id="catsel" style="flex:1;min-width:240px"><option value="">+ Adicionar do catálogo de preços…</option>${[...new Set(cat.map(c => c.grupo))].sort(AZ).map(g => `<optgroup label="${esc(g)}">${cat.filter(c => c.grupo === g).map(c => `<option value="${c.id}">${esc(c.desc)} (${esc(c.un)}${c.unit ? ' · ' + money(c.unit) : ''})</option>`).join('')}</optgroup>`).join('')}</select><select class="select" id="compsel" style="flex:1;min-width:240px"><option value="">+ Adicionar composição (mão de obra + materiais)…</option>${(() => { const D = window.Comp ? Comp.dados() : { composicoes: [] }; return [...new Set(D.composicoes.map(c => c.grupo))].sort(AZ).map(g => `<optgroup label="${esc(g)}">${D.composicoes.filter(c => c.grupo === g).sort((a, b) => AZ(a.nome, b.nome)).map(c => `<option value="${c.id}">${esc(c.nome)} (${esc(c.un)} · ${money(Comp.custo(c, D.insumos).total)})</option>`).join('')}</optgroup>`).join(''); })()}</select>
           <button class="btn" id="addfree">${icon('plus')} Item livre</button><button class="btn" id="addet" title="Copiar etapas da obra vinculada">${icon('copy')} Importar etapas da obra</button></div>
         <div class="row mt"><select class="select" id="modorc" style="flex:1;min-width:240px"><option value="">★ Aplicar modelo de orçamento da VTN…</option>${(window.VTN_MODELOS ? VTN_MODELOS.MODELOS_ORC : []).map(mo => `<option value="${mo.id}">${esc(mo.nome)} – ${esc(mo.origem)}</option>`).join('')}</select></div>
         <div class="grid g2 mt2"><div>${UI.fields([{ k: 'condicoes', l: 'Condições de pagamento', t: 'textarea', full: 1, rows: 3 }, { k: 'obs', l: 'Observações / escopo', t: 'textarea', full: 1, rows: 3 }], o)}</div>
@@ -62,7 +65,9 @@ Views.orcamentos = {
             <dt>Desconto (R$)</dt><dd class="right"><input class="input" type="number" step="any" data-g="desconto" value="${o.desconto}" style="width:120px;text-align:right"></dd>
             <dt style="font-size:16px;font-weight:700;color:var(--text)">TOTAL</dt><dd class="right" style="font-size:20px;font-weight:800;color:var(--brand)">${money(t.total)}</dd></dl></div></div></div>`;
       UI.icons();
-      const grab = () => { Object.assign(o, UI.read(body, [{ k: 'titulo' }, { k: 'clienteId' }, { k: 'obraId' }, { k: 'data' }, { k: 'validade' }, { k: 'status' }, { k: 'condicoes' }, { k: 'obs' }])); };
+      const grab = () => { Object.assign(o, UI.read(body, [{ k: 'titulo' }, { k: 'clienteIds', t: 'multi' }, { k: 'obraId' }, { k: 'data' }, { k: 'validade' }, { k: 'status' }, { k: 'condicoes' }, { k: 'obs' }])); o.clienteId = o.clienteIds[0] || ''; };
+      // a obra dita o nome e os clientes do orçamento
+      const selObra = UI.$('[name="obraId"]', body); if (selObra) selObra.onchange = () => { grab(); const ob = Store.get('obras', o.obraId); if (ob) { o.titulo = 'Orçamento – ' + ob.nome; o.clienteIds = (ob.clienteIds || []).slice(); o.clienteId = o.clienteIds[0] || ''; UI.toast('Nome e cliente(s) preenchidos pela obra'); } draw(); };
       UI.$$('[data-i]', body).forEach(i => i.onchange = () => { grab(); const it = o.itens[+i.dataset.i]; it[i.dataset.f] = ['qtd', 'unit'].includes(i.dataset.f) ? +i.value || 0 : i.value; draw(); });
       UI.$$('[data-g]', body).forEach(i => i.onchange = () => { grab(); o[i.dataset.g] = +i.value || 0; draw(); });
       UI.$$('[data-rm]', body).forEach(b => b.onclick = () => { grab(); o.itens.splice(+b.dataset.rm, 1); draw(); });
@@ -83,28 +88,29 @@ Views.orcamentos = {
     draw();
     const save = () => { m.grab(); Store.update('orcamentos', id, o); };
     m.$('[data-sv]').onclick = () => { save(); m.close(); UI.toast('Orçamento salvo'); App.refresh(); };
-    m.$('[data-pr]').onclick = () => { save(); this.imprimir(id); };
+    m.$('[data-pr]').onclick = () => { save(); this.imprimir(id); this.salvarNaObra(id, true); };
+    m.$('[data-so]').onclick = () => { save(); this.salvarNaObra(id); };
     m.$('[data-del]').onclick = async () => { if (await UI.confirm('Excluir orçamento?')) { Store.remove('orcamentos', id); m.close(); App.refresh(); } };
     m.$('[data-ob]').onclick = () => {
       save(); const x = Store.get('orcamentos', id);
       if (x.obraId) { UI.toast('Já vinculado a ' + x.obraId); return; }
       m.close();
-      Views.obras.edit(null, { nome: x.titulo.replace(/^Orçamento\s*[–-]\s*/i, ''), clienteIds: x.clienteId ? [x.clienteId] : [], valorContrato: Calc.orcTotal(x).total, status: 'Contratada', descricao: x.obs });
+      Views.obras.edit(null, { nome: x.titulo.replace(/^Orçamento\s*[–-]\s*/i, ''), clienteIds: clientesDe(x).slice(), valorContrato: Calc.orcTotal(x).total, status: 'Contratada', descricao: x.obs });
     };
-    m.$('[data-pp]').onclick = () => { save(); m.close(); const x = Store.get('orcamentos', id); const obra = x.modeloVTN === 'obra_mo' ? 'vtn_carta_proposta_obra' : x.modeloVTN === 'vistoria' ? 'vtn_carta_proposta_vistoria' : 'vtn_proposta_2026'; Views.contratos.novo({ modelo: obra, obraId: x.obraId, clienteIds: x.clienteId ? [x.clienteId] : [], valor: Calc.orcTotal(x).total, orcamentoId: id, condicoes: x.condicoes, titulo: x.titulo.replace(/^Orçamento\s*[–-]\s*/i, ''), naoIncluso: (x.obs || '').replace(/^Não inclusos?:\s*/i, '').split(/[;,.]\s*/).filter(Boolean).join('\n') }); };
-    m.$('[data-ct]').onclick = () => { save(); m.close(); const x = Store.get('orcamentos', id); Views.contratos.novo({ obraId: x.obraId, clienteIds: x.clienteId ? [x.clienteId] : [], valor: Calc.orcTotal(x).total, orcamentoId: id, condicoes: x.condicoes, titulo: 'Contrato – ' + x.titulo }); };
+    m.$('[data-pp]').onclick = () => { save(); m.close(); const x = Store.get('orcamentos', id); const obra = x.modeloVTN === 'obra_mo' ? 'vtn_carta_proposta_obra' : x.modeloVTN === 'vistoria' ? 'vtn_carta_proposta_vistoria' : 'vtn_proposta_2026'; Views.contratos.novo({ modelo: obra, obraId: x.obraId, clienteIds: (Store.get('obras', x.obraId) || {}).clienteIds || clientesDe(x), valor: Calc.orcTotal(x).total, orcamentoId: id, condicoes: x.condicoes, titulo: x.titulo.replace(/^Orçamento\s*[–-]\s*/i, ''), naoIncluso: (x.obs || '').replace(/^Não inclusos?:\s*/i, '').split(/[;,.]\s*/).filter(Boolean).join('\n') }); };
+    m.$('[data-ct]').onclick = () => { save(); m.close(); const x = Store.get('orcamentos', id); Views.contratos.novo({ obraId: x.obraId, clienteIds: (Store.get('obras', x.obraId) || {}).clienteIds || clientesDe(x), valor: Calc.orcTotal(x).total, orcamentoId: id, condicoes: x.condicoes, titulo: 'Contrato – ' + x.titulo }); };
   },
   html(id) {
     const { esc, money, date } = UI; const o = Store.get('orcamentos', id); const t = Calc.orcTotal(o);
-    const cli = Store.get('pessoas', o.clienteId) || {}; const ob = Store.get('obras', o.obraId) || {};
+    const ob = Store.get('obras', o.obraId) || {};
     const papel = Views.contratos.papel({ categoria: 'Orçamento' }, { numero: o.id });
     return `<div class="vdoc">${papel}
       <h1>ORÇAMENTO<br><small>${esc(o.titulo)}</small></h1>
-      <table class="kv"><tr><th>CLIENTE</th><td>${esc(cli.nome || '—')}${cli.cpf ? '<br><span class="tiny">CPF/CNPJ ' + esc(cli.cpf) + '</span>' : ''}</td><th>DATA</th><td>${date(o.data)}</td><th>VALIDADE</th><td>${date(o.validade)}</td></tr>
+      <table class="kv"><tr><th>${clientesDe(o).length > 1 ? 'CLIENTES' : 'CLIENTE'}</th><td>${clientesDe(o).map(cid => Store.get('pessoas', cid) || {}).map(p => esc(p.nome || '—') + (p.cpf ? '<br><span class="tiny">CPF/CNPJ ' + esc(p.cpf) + '</span>' : '')).join('<br>') || '—'}</td><th>DATA</th><td>${date(o.data)}</td><th>VALIDADE</th><td>${date(o.validade)}</td></tr>
       ${ob.nome ? `<tr><th>OBRA</th><td colspan="5">${esc(ob.nome)}${ob.endereco ? ' – ' + esc(ob.endereco) : ''}${ob.cidade ? ', ' + esc(ob.cidade) + '/' + esc(ob.uf || 'MG') : ''}${ob.area ? ' · ' + UI.num(ob.area) + ' m²' : ''}</td></tr>` : ''}</table>
       <h2>Composição do orçamento</h2>
       <table class="dt"><thead><tr><th>#</th><th>Item</th><th class="n">Qtde</th><th>Unid.</th><th class="n">Custo unitário</th><th class="n">Custo total</th></tr></thead><tbody>
-      ${o.itens.map((i, k) => `<tr><td>${String(k + 1).padStart(2, '0')}</td><td>${esc(i.desc)}</td><td class="n">${UI.num(i.qtd)}</td><td>${esc(i.un)}</td><td class="n">${money(i.unit)}</td><td class="n">${money(i.qtd * i.unit)}</td></tr>`).join('')}
+      ${itensAZ(o.itens).map((i, k) => `<tr><td>${String(k + 1).padStart(2, '0')}</td><td>${esc(i.desc)}</td><td class="n">${UI.num(i.qtd)}</td><td>${esc(i.un)}</td><td class="n">${money(i.unit)}</td><td class="n">${money(i.qtd * i.unit)}</td></tr>`).join('')}
       </tbody><tfoot><tr><td colspan="5" class="n">TOTAL ORÇAMENTO</td><td class="n">${money(t.sub)}</td></tr>
       ${t.bdi ? `<tr><td colspan="5" class="n">BDI (${UI.num(o.bdi)}%)</td><td class="n">${money(t.bdi)}</td></tr>` : ''}
       ${t.imp ? `<tr><td colspan="5" class="n">${+o.imposto > 7 ? 'IMPOSTO + TAXA' : 'IMPOSTO NOTA'} (${UI.num(o.imposto)}%)</td><td class="n">${money(t.imp)}</td></tr>` : ''}
@@ -113,9 +119,14 @@ Views.orcamentos = {
       ${o.condicoes ? `<h2>Condições de pagamento</h2><p>${esc(o.condicoes)}</p>` : ''}${o.obs ? `<h2>Observações e escopo</h2><p>${esc(o.obs)}</p>` : ''}
       <ul><li>Orçamento válido até ${date(o.validade)}.</li><li>Nota fiscal dos serviços prestados.</li></ul>
       <p class="local">${esc((ob.cidade || 'Itabirito'))}/MG, ${UI.dateLong(o.data)}.</p>
-      <div class="sigs"><div class="sig-l"><i></i><b>VTN Engenharia e Construções</b><span>RT: Ismael José Viana Timóteo – Engenheiro Civil – CREA/MG 251884</span></div><div class="sig-l"><i></i><b>De acordo – ${esc(cli.nome || 'Cliente')}</b><span>CPF/CNPJ nº ${esc(cli.cpf || '________________')}</span></div></div>
+      <div class="sigs"><div class="sig-l"><i></i><b>VTN Engenharia e Construções</b><span>RT: Ismael José Viana Timóteo – Engenheiro Civil – CREA/MG 251884</span></div>${(clientesDe(o).length ? clientesDe(o).map(cid => Store.get('pessoas', cid) || {}) : [{}]).map(cli => `<div class="sig-l"><i></i><b>De acordo – ${esc(cli.nome || 'Cliente')}</b><span>CPF/CNPJ nº ${esc(cli.cpf || '________________')}</span></div>`).join('')}</div>
       ${Views.contratos.rodape()}</div>`;
   },
-  imprimir(id) { UI.print(this.html(id), 'Orçamento ' + id); }
+  imprimir(id) { UI.print(this.html(id), 'Orçamento ' + id); },
+  /* grava o orçamento em PDF na pasta da obra no OneDrive: 00_SERVIÇOS\<nº> - <NOME>\..COMERCIAL (só arquivo novo; nunca substitui) */
+  async salvarNaObra(id, silencioso) {
+    const o = Store.get('orcamentos', id); if (!o) return;
+    return Drive.salvarDoc(o.obraId, { corpo: this.html(id), titulo: o.titulo, categoria: 'Orçamento', arquivo: ('ORCAMENTO_' + o.id + '_' + (o.titulo || '').replace(/[^\wÀ-ú\- ]+/g, '').trim().replace(/\s+/g, '_').slice(0, 50) + '_' + new Date().toISOString().slice(0, 10)).replace(/_+$/, ''), avisar: !silencioso });
+  }
 };
 Open.ORC = id => Views.orcamentos.editor(id);

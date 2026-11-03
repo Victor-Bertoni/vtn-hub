@@ -90,8 +90,9 @@ Views.composicoes = {
   /* ---------- composições ---------- */
   t_comp(c, D) {
     const { icon, money, esc, num } = UI; const s = this.st;
-    const grupos = [...new Set(D.composicoes.map(x => x.grupo))];
-    const L = D.composicoes.filter(x => (!s.grupo || x.grupo === s.grupo));
+    const AZ = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
+    const grupos = [...new Set(D.composicoes.map(x => x.grupo))].sort(AZ);
+    const L = D.composicoes.filter(x => (!s.grupo || x.grupo === s.grupo)).sort((a, b) => AZ(a.grupo, b.grupo) || AZ(a.nome, b.nome));
     const rows = L.map(x => Object.assign({ __attr: `data-cp="${x.id}" style="cursor:pointer"` }, x, { _c: Comp.custo(x, D.insumos) }));
     c.innerHTML = `<div class="row mb" style="gap:8px;flex-wrap:wrap"><select class="select" id="cpg" style="max-width:320px"><option value="">Todas as etapas</option>${grupos.map(g => `<option ${g === s.grupo ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>
         <label class="tiny muted row" style="gap:6px">BDI para preço de venda <input class="input" id="cpbdi" type="number" value="${s.bdi}" style="width:70px">%</label>
@@ -133,7 +134,7 @@ Views.composicoes = {
         <div class="table-wrap"><table class="t"><thead><tr><th>Insumo</th><th>Un.</th><th class="num">Consumo</th><th class="num">Preço</th><th class="num">Subtotal</th><th></th></tr></thead><tbody>
           ${r.linhas.map((l, k) => `<tr><td>${esc(l.x.nome)}${+l.x.preco ? '' : ' <span class="badge warn">sem preço</span>'}</td><td>${esc(l.x.un)}</td><td class="num"><input class="input" type="number" step="0.0001" data-c="${k}" value="${l.coef}" style="width:90px;text-align:right"></td><td class="num">${money(l.x.preco || 0)}</td><td class="num">${money(l.v)}</td><td><button class="btn ghost icon sm" data-rm="${k}" title="Remover">${icon('x')}</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted tiny">Só mão de obra. Adicione materiais abaixo.</td></tr>'}
         </tbody><tfoot><tr><td colspan="4">Materiais</td><td class="num">${money(r.mat)}</td><td></td></tr><tr><td colspan="4">Mão de obra</td><td class="num">${money(r.mo)}</td><td></td></tr><tr><td colspan="4"><b>Custo direto por ${esc(x.un || 'un')}</b></td><td class="num"><b>${money(r.total)}</b></td><td></td></tr></tfoot></table></div>
-        <div class="row mt"><select class="select" id="cpadd" style="flex:1"><option value="">+ Adicionar material/insumo…</option>${D.insumos.map(i => `<option value="${i.id}">${esc(i.nome)} (${esc(i.un)}${+i.preco ? ' · ' + money(i.preco) : ''})</option>`).join('')}</select></div>
+        <div class="row mt"><select class="select" id="cpadd" style="flex:1"><option value="">+ Adicionar material/insumo…</option>${D.insumos.slice().sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base', numeric: true })).map(i => `<option value="${i.id}">${esc(i.nome)} (${esc(i.un)}${+i.preco ? ' · ' + money(i.preco) : ''})</option>`).join('')}</select></div>
         <div class="field mt"><label>Observações</label><textarea class="input" rows="2" data-k="obs">${esc(x.obs || '')}</textarea></div>`;
       UI.$$('[data-k]', box).forEach(i => i.onchange = () => { x[i.dataset.k] = ['maoObra', 'terceiro'].includes(i.dataset.k) ? +i.value || 0 : i.value; draw(); });
       UI.$$('[data-c]', box).forEach(i => i.onchange = () => { x.itens[+i.dataset.c].coef = +i.value || 0; draw(); });
@@ -158,7 +159,7 @@ Views.composicoes = {
   t_ins(c, D) {
     const { icon, money, esc, date } = UI;
     const uso = id => D.composicoes.filter(x => x.itens.some(i => i.insumoId === id)).length;
-    const rows = D.insumos.map(x => Object.assign({ __attr: `data-in="${x.id}" style="cursor:pointer"` }, x));
+    const rows = D.insumos.slice().sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base', numeric: true })).map(x => Object.assign({ __attr: `data-in="${x.id}" style="cursor:pointer"` }, x));
     c.innerHTML = `<div class="row mb"><span class="tiny muted">Atualize os preços com as cotações dos fornecedores: todas as composições recalculam na hora.</span><span style="flex:1"></span><button class="btn primary keep" id="innovo">${icon('plus')} Novo insumo</button></div>
       <div class="card"><div class="card-b" style="padding:0">${UI.table([
         { h: 'Insumo', f: x => `<b>${esc(x.nome)}</b>` }, { h: 'Tipo', k: 'tipo' }, { h: 'Un.', k: 'un' },

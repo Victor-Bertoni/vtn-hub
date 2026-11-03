@@ -142,6 +142,7 @@ public class MainActivity extends Activity {
         w.setBuiltInZoomControls(true);
         w.setDisplayZoomControls(false);
         w.setAllowFileAccess(false);
+        w.setTextZoom(100);   // ignora o "tamanho da fonte" do Android, que espremia o layout em pé
         w.setUserAgentString(w.getUserAgentString() + " VTNHubAndroid/1");
         web.addJavascriptInterface(new Ponte(), "VTNAndroid");
 

@@ -4,7 +4,7 @@ Views.financeiro = {
   st: { tab: 'caixa', obra: '', tipo: '', status: '', cat: '', de: '', ate: '', q: '' },
   render(el, tab) {
     const { icon, money, esc } = UI; const s = this.st; if (tab) s.tab = tab;
-    const T = [['caixa', 'Caixa / lançamentos', 'list'], ['receber', 'A receber', 'hand-coins'], ['pagar', 'A pagar', 'receipt'], ['balanco', 'Balanço (DRE)', 'scale'], ['obras', 'Lucro por obra', 'hard-hat']];
+    const T = [['caixa', 'Caixa / lançamentos', 'list'], ['receber', 'A receber', 'hand-coins'], ['pagar', 'A pagar', 'receipt'], ['balanco', 'Balanço (DRE)', 'scale'], ['obras', 'Lucro por obra', 'hard-hat'], ['auditoria', 'Auditoria', 'shield-check']];
     const f = Calc.fin(s.obra || null, { de: s.de, ate: s.ate });
     el.innerHTML = `
       <div class="page-head"><div><h1>Caixa e balanço</h1><p>Receitas, despesas, pagamentos e lucro da empresa e de cada obra</p></div>
@@ -98,6 +98,66 @@ Views.financeiro = {
       <div class="card"><div class="card-h"><h3>Receitas × despesas por mês</h3></div><div class="card-b"><div class="chart-box"><canvas id="chBal"></canvas></div></div></div></div>
       <div class="card mt"><div class="card-h"><h3>Balanço mensal</h3></div>${UI.table([{ h: 'Mês', f: x => Calc.mesLabel(x.mes) }, { h: 'Receitas', num: 1, f: x => money(x.receita) }, { h: 'Despesas', num: 1, f: x => money(x.despesa) }, { h: 'Resultado', num: 1, f: x => `<b style="color:${x.saldo >= 0 ? 'var(--ok)' : 'var(--err)'}">${money(x.saldo)}</b>` }, { h: 'Acumulado', num: 1, f: x => money(x.acumulado) }], fx, { foot: ['Total', money(fx.reduce((a, x) => a + x.receita, 0)), money(fx.reduce((a, x) => a + x.despesa, 0)), money(fx.reduce((a, x) => a + x.saldo, 0)), ''] })}</div>`;
     UI.chart('chBal', { type: 'bar', data: { labels: fx.map(x => Calc.mesLabel(x.mes)), datasets: [{ label: 'Receitas', data: fx.map(x => x.receita), backgroundColor: '#16a34a', borderRadius: 4 }, { label: 'Despesas', data: fx.map(x => x.despesa), backgroundColor: '#dc2626', borderRadius: 4 }, { type: 'line', label: 'Acumulado', data: fx.map(x => x.acumulado), borderColor: '#2563eb', tension: .3 }] }, options: { scales: { y: { ticks: { callback: UI.moneyTick } } } } });
+  },
+  /* Auditoria financeira: cada obra com contrato é revisada uma a uma (valor do contrato, documentos e lançamentos).
+     Só administradores (Victor e Ismael) editam e marcam como revisado. Nada é apagado. */
+  t_auditoria(c) {
+    const { money, esc, icon, date } = UI; const s = this.st; s.aud = s.aud || 'revisar';
+    const adm = ((Auth.current() || {}).papel === 'admin');
+    const catDe = x => Views.contratos.categoriaDe(x);
+    const docs = oid => Store.all('contratos').filter(x => x.obraId === oid && catDe(x) === 'Contrato');
+    const todas = Store.all('obras').filter(o => (+o.valorContrato || 0) > 0 || docs(o.id).length).map(o => {
+      const f = Calc.fin(o.id); const a = o.auditoriaFin || {};
+      const valorDocs = docs(o.id).reduce((t, x) => t + (+x.valor || 0), 0);
+      return { o, f, a, valorDocs, receitas: f.receitaPaga + f.receitaPendente, dif: (+o.valorContrato || 0) - (f.receitaPaga + f.receitaPendente), ok: a.status === 'revisado' };
+    }).sort((x, y) => (parseInt(x.o.numero, 10) || 0) - (parseInt(y.o.numero, 10) || 0) || String(x.o.id).localeCompare(y.o.id));
+    const L = todas.filter(r => s.aud === 'todos' || (s.aud === 'revisado' ? r.ok : !r.ok));
+    const nOk = todas.filter(r => r.ok).length;
+    c.innerHTML = `<div class="card mb"><div class="card-b"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div><b>Auditoria financeira dos contratos</b><div class="tiny muted">${nOk} de ${todas.length} revisados · confira valor do contrato, documentos e lançamentos de cada obra e marque como revisado. ${adm ? '' : 'Somente Victor e Ismael alteram.'}</div>
+        <div class="mt" style="height:8px;max-width:420px;background:var(--surface-2);border-radius:99px;overflow:hidden"><div style="height:100%;width:${todas.length ? nOk / todas.length * 100 : 0}%;background:var(--ok)"></div></div></div>
+        <div class="row" style="gap:6px">${[['revisar', 'A revisar'], ['revisado', 'Revisados'], ['todos', 'Todos']].map(([k, l]) => `<button class="btn sm ${s.aud === k ? 'primary' : ''}" data-aud="${k}">${l}</button>`).join('')}</div></div></div></div>
+      <div class="card">${UI.table([
+        { h: 'Obra', f: r => `${UI.idLink(r.o.id)} <span class="plink" data-goto="${r.o.id}">${esc(r.o.nome)}</span>` },
+        { h: 'Contrato (obra)', num: 1, f: r => money(r.o.valorContrato) },
+        { h: 'Documentos de contrato', num: 1, f: r => r.valorDocs ? money(r.valorDocs) + (Math.abs(r.valorDocs - (+r.o.valorContrato || 0)) > 0.5 ? ' <span class="badge warn" title="Diferente do valor da obra">≠</span>' : '') : '<span class="muted">—</span>' },
+        { h: 'Recebido', num: 1, f: r => money(r.f.receitaPaga) }, { h: 'A receber', num: 1, f: r => money(r.f.receitaPendente) },
+        { h: 'Falta lançar', num: 1, f: r => Math.abs(r.dif) > 0.5 ? `<b style="color:${r.dif > 0 ? 'var(--warn)' : 'var(--err)'}">${money(r.dif)}</b>` : '<span style="color:var(--ok)">ok</span>' },
+        { h: 'Situação', f: r => r.ok ? `<span class="badge ok">Revisado</span><div class="tiny muted">${date((r.a.em || '').slice(0, 10))} · ${esc(r.a.por || '')}</div>` : '<span class="badge warn">A revisar</span>' },
+        { h: '', f: r => `<button class="btn sm" data-rev="${r.o.id}">${icon('shield-check')} ${adm ? 'Revisar' : 'Ver'}</button>` }
+      ], L, { emptyMsg: s.aud === 'revisar' ? 'Tudo revisado 🎉' : 'Nada aqui.' })}</div>
+      <p class="tiny muted">"Falta lançar" = valor do contrato − (recebido + a receber). Diferente de zero indica parcela faltando, valor errado ou lançamento a mais.</p>`;
+    UI.$$('[data-aud]', c).forEach(b => b.onclick = () => { s.aud = b.dataset.aud; this.t_auditoria(c); UI.icons(); });
+    UI.$$('[data-rev]', c).forEach(b => b.onclick = () => this.revisarObra(b.dataset.rev, () => { this.t_auditoria(c); UI.icons(); }));
+    UI.icons();
+  },
+  revisarObra(oid, depois) {
+    const { money, esc, icon, date } = UI; const adm = ((Auth.current() || {}).papel === 'admin');
+    const o = Store.get('obras', oid); const ls = Store.where('lancamentos', l => l.obraId === oid).slice().sort((a, b) => String(a.vencimento || a.data || '').localeCompare(String(b.vencimento || b.data || '')));
+    const dcs = Store.all('contratos').filter(x => x.obraId === oid && Views.contratos.categoriaDe(x) === 'Contrato');
+    const f = Calc.fin(oid); const a = o.auditoriaFin || {};
+    const m = UI.modal({ title: 'Auditoria financeira · ' + o.id + ' · ' + o.nome, wide: true, body: `
+      <div class="grid g3"><div class="field"><label>Valor do contrato (obra)</label><input class="input" type="number" step="0.01" id="avc" value="${+o.valorContrato || 0}" ${adm ? '' : 'disabled'}></div>
+        <div class="field"><label>Recebido / a receber</label><div class="input" style="background:var(--surface-2)">${money(f.receitaPaga)} / ${money(f.receitaPendente)}</div></div>
+        <div class="field"><label>Gasto / a pagar</label><div class="input" style="background:var(--surface-2)">${money(f.despesaPaga)} / ${money(f.despesaPendente)}</div></div></div>
+      ${dcs.length ? `<h3 class="mt2 mb">Documentos de contrato</h3><div class="table-wrap"><table class="t"><thead><tr><th>Documento</th><th>Data</th><th class="num">Valor (R$)</th><th>Condições de pagamento</th></tr></thead><tbody>
+        ${dcs.map(x => `<tr><td>${UI.idLink(x.id)} ${esc(x.titulo || '')}</td><td>${date(x.data)}</td><td class="num"><input class="input" type="number" step="0.01" data-dv="${x.id}" value="${+x.valor || 0}" style="width:130px;text-align:right" ${adm ? '' : 'disabled'}></td><td><textarea class="input" data-dc="${x.id}" rows="2" style="width:100%" ${adm ? '' : 'disabled'}>${esc(x.condicoes || '')}</textarea></td></tr>`).join('')}</tbody></table></div>` : '<p class="tiny muted mt2">Esta obra não tem documento de contrato gerado no app.</p>'}
+      <h3 class="mt2 mb">Lançamentos da obra (${ls.length})</h3><div class="table-wrap"><table class="t"><thead><tr><th>Venc./data</th><th>Tipo</th><th>Descrição</th><th>Status</th><th class="num">Valor</th><th></th></tr></thead><tbody>
+        ${ls.map(l => `<tr><td>${date(l.vencimento || l.data)}</td><td>${l.tipo === 'receita' ? '<span class="badge ok">Receita</span>' : '<span class="badge err">Despesa</span>'}</td><td>${esc(l.descricao || l.categoria || '')}</td><td>${esc(l.status)}</td><td class="num">${money(l.valor)}</td><td>${adm ? `<button class="btn sm ghost" data-le="${l.id}">${icon('pencil')}</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Nenhum lançamento.</td></tr>'}</tbody></table></div>
+      ${adm ? `<div class="row mt"><button class="btn" id="anovo">${icon('plus')} Novo lançamento desta obra</button></div>` : ''}
+      <div class="field mt2"><label>Observações da auditoria</label><textarea class="input" id="aobs" rows="2" ${adm ? '' : 'disabled'}>${esc(a.obs || '')}</textarea></div>
+      ${a.status === 'revisado' ? `<p class="tiny muted">Revisado em ${date((a.em || '').slice(0, 10))} por ${esc(a.por || '')}.</p>` : ''}`,
+      footer: adm ? `<button class="btn" data-close>Fechar</button>${a.status === 'revisado' ? `<button class="btn" data-ar>Voltar para "a revisar"</button>` : ''}<button class="btn" data-sv>${icon('save')} Salvar</button><button class="btn primary" data-ok>${icon('shield-check')} Salvar e marcar revisado</button>` : `<button class="btn" data-close>Fechar</button>` });
+    if (!adm) return;
+    const gravar = status => {
+      Store.update('obras', oid, { valorContrato: +m.$('#avc').value || 0, auditoriaFin: Object.assign({}, o.auditoriaFin, { obs: m.$('#aobs').value }, status ? { status, em: new Date().toISOString(), por: (Auth.current() || {}).nome || '' } : {}) });
+      m.el.querySelectorAll('[data-dv]').forEach(i => Store.update('contratos', i.dataset.dv, { valor: +i.value || 0, condicoes: m.$(`[data-dc="${i.dataset.dv}"]`).value }));
+    };
+    m.$('[data-sv]').onclick = () => { gravar(); UI.toast('Auditoria salva'); m.close(); depois && depois(); };
+    m.$('[data-ok]').onclick = () => { gravar('revisado'); UI.toast('Marcado como revisado'); m.close(); depois && depois(); };
+    const ar = m.$('[data-ar]'); if (ar) ar.onclick = () => { gravar('a revisar'); m.close(); depois && depois(); };
+    m.el.querySelectorAll('[data-le]').forEach(b => b.onclick = async () => { gravar(); m.close(); await this.edit(b.dataset.le); this.revisarObra(oid, depois); });
+    const nv = m.$('#anovo'); if (nv) nv.onclick = async () => { gravar(); m.close(); await this.edit(null, { obraId: oid, tipo: 'receita' }); this.revisarObra(oid, depois); };
   },
   t_obras(c) {
     const { money, pct, esc } = UI;

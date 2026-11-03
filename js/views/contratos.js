@@ -87,28 +87,60 @@ Views.contratos = {
     md.$('[data-d]').onclick = async () => { if (await UI.confirm('Excluir este modelo?')) { Store.db.modelosContrato = Store.db.modelosContrato.filter(x => x.id !== id); Store.save(); md.close(); App.refresh(); } };
   },
 
-  proximoNumero() { const n = (Store.db.seq.PROP || 179) + 1; return n + '/' + UI.today().slice(0, 4); },
+  /* nº da proposta: o maior nº já usado por uma proposta que existe + 1.
+     Proposta excluída ou nunca usada não "gasta" número: o próximo reaproveita.
+     Sem nenhuma proposta no app, continua da numeração antiga (seq.PROP). */
+  categoriaDe(x) { return x.categoria || (this.modelos().find(m => m.id === x.modelo) || {}).categoria || ''; },
+  proximoNumero(ignorarId) {
+    const nums = Store.all('contratos').filter(x => x.id !== ignorarId && this.categoriaDe(x) === 'Proposta')
+      .map(x => parseInt(String(x.numero || ''), 10)).filter(n => n > 0);
+    const n = (nums.length ? Math.max(...nums) : (Store.db.seq.PROP || 179)) + 1;
+    return n + '/' + UI.today().slice(0, 4);
+  },
   defaults(modelo, o, orc) {
     const m = this.modelo(modelo) || {}; const tipo = (o && o.tipo) || '';
     const ni = { vtn_contrato_projetos: 'Taxas da Prefeitura\nProtocolos e taxas cartoriais\nExecução da obra e quaisquer outros serviços não discriminados no escopo', vtn_empreitada_global: 'Terraplanagem do lote\nPadrão + instalação de energia, hidrômetro + instalação de água\nMuro de fachada, laterais, fundos e arrimos\nCalçada da rua, calçada no entorno da casa e rampa da garagem\nBox e chuveiros dos banheiros\nSistema de aquecimento solar (incluso somente tubulação embutida)\nReboco interno (incluso revestimento em gesso liso)\nPaisagismo', vtn_proposta_2026: 'Taxas e alvarás da Prefeitura\nTaxas cartoriais', vtn_carta_proposta_obra: 'Pintura geral\nForro ou reboco de teto\nTelhado\nTaxas da Prefeitura\nMateriais e insumos' }[modelo] || '';
     const obj = { vtn_contrato_projetos: 'elaboração dos projetos complementares', vtn_empreitada_global: 'a elaboração dos projetos topográfico, arquitetônico, estrutural, elétrico e hidrossanitário, a PCI e as PLS CAIXA, ART de projeto e execução', vtn_prestacao_servico: (o && o.nome ? 'o serviço "' + o.nome + '"' : 'elaboração de projeto'), vtn_acompanhamento_reforma: 'obras de reforma', vtn_proposta_2026: tipo === 'Projeto' ? 'a elaboração dos projetos da sua residência' : 'serviço especializado em engenharia', vtn_termo_acesso: 'instrução de processo de usucapião' }[modelo] || '';
-    const inc = orc ? orc.itens.map(i => i.desc).join('\n') + '\nNota fiscal dos serviços prestados' : '';
+    const inc = orc ? itensAZ(orc.itens).map(i => i.desc).join('\n') + '\nNota fiscal dos serviços prestados' : '';
     return { naoIncluso: ni, objeto: obj, incluso: inc, numero: m.categoria === 'Proposta' || m.categoria === 'Recibo' ? (m.categoria === 'Recibo' ? 'VTN' + String((Store.db.seq.REC || 471) + 1).padStart(5, '0') : this.proximoNumero()) : '', validadeDias: 15, descontoPix: 10, parcelas: m.id === 'vtn_contrato_projetos' ? 6 : 3 };
   },
 
   async novo(preset = {}) {
     const M = this.modelos();
+    // proposta de um orçamento que já tem proposta: usa a mesma (mesmo nº), não gasta número novo
+    if (preset.orcamentoId && (M.find(m => m.id === preset.modelo) || {}).categoria === 'Proposta') {
+      const ja = Store.all('contratos').filter(x => x.orcamentoId === preset.orcamentoId && this.categoriaDe(x) === 'Proposta').sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')))[0];
+      if (ja) {
+        if (await UI.confirm(`Este orçamento já tem a proposta nº ${UI.esc(ja.numero || ja.id)}. Atualizar essa mesma proposta com os valores e itens atuais do orçamento (mantém o número)?<br><span class="tiny muted">Cancelar = abrir a proposta como está.</span>`, 'Atualizar')) {
+          Store.update('contratos', ja.id, { valor: preset.valor, condicoes: preset.condicoes || ja.condicoes, titulo: preset.titulo || ja.titulo, naoIncluso: preset.naoIncluso || ja.naoIncluso, modelo: preset.modelo, corpo: '' });
+        }
+        return this.editor(ja.id);
+      }
+    }
     const o = Store.get('obras', preset.obraId);
     const orc = Store.get('orcamentos', preset.orcamentoId);
     const modelo = preset.modelo || (o && o.modalidade === 'Elaboração de projetos' ? 'vtn_contrato_projetos' : o && o.modalidade === 'Empreitada global' ? 'vtn_empreitada_global' : 'vtn_contrato_projetos');
-    const v = Object.assign({ modelo, data: UI.today(), status: 'Rascunho', valor: orc ? Calc.orcTotal(orc).total : o ? o.valorContrato : 0, clienteIds: o ? o.clienteIds : orc && orc.clienteId ? [orc.clienteId] : [], prazoMeses: 12, prazoDias: 40, titulo: o ? o.nome : orc ? orc.titulo : '', cidade: (o && o.cidade) || 'Itabirito', inicio: UI.today() },
+    const v = Object.assign({ modelo, data: UI.today(), status: 'Rascunho', valor: orc ? Calc.orcTotal(orc).total : o ? o.valorContrato : 0, clienteIds: o ? (o.clienteIds || []).slice() : orc ? clientesDe(orc).slice() : [], prazoMeses: 12, prazoDias: 40, titulo: o ? o.nome : orc ? orc.titulo : '', cidade: (o && o.cidade) || 'Itabirito', inicio: UI.today() },
       this.defaults(modelo, o, orc), preset);
     const opts = () => Object.keys(this.CATS).flatMap(k => M.filter(m => m.categoria === k).map(m => [m.id, `${k} · ${m.nome}${m.vtn ? ' (VTN)' : ''}`]));
+    // a obra dita o título e os clientes do documento
+    setTimeout(() => {
+      const md = [...document.querySelectorAll('.modal')].pop(); if (!md) return;
+      const so = md.querySelector('[name="obraId"]'); if (!so) return;
+      so.addEventListener('change', () => {
+        const ob = Store.get('obras', so.value); if (!ob) return;
+        const ti = md.querySelector('[name="titulo"]'); if (ti) ti.value = ob.nome;
+        const sc = md.querySelector('[name="clienteIds"]');
+        if (sc) { (ob.clienteIds || []).forEach(cid => { if (![...sc.options].some(x => x.value === cid)) { const p = Store.get('pessoas', cid); if (p) sc.add(new Option(p.nome, cid)); } }); [...sc.options].forEach(x => { x.selected = (ob.clienteIds || []).includes(x.value); }); }
+        const ci = md.querySelector('[name="cidade"]'); if (ci && ob.cidade) ci.value = ob.cidade;
+        UI.toast('Título e cliente(s) preenchidos pela obra');
+      });
+    }, 60);
     const d = await UI.formModal({ title: 'Gerar documento', wide: true, okLabel: 'Gerar documento', values: v, list: [
       { k: 'modelo', l: 'Modelo', t: 'select', o: opts, req: 1, blank: false, full: 1 },
       { k: 'titulo', l: 'Título / assunto', req: 1 }, { k: 'numero', l: 'Nº da proposta / recibo', ph: 'ex.: 180/2026' },
       { k: 'obraId', l: 'Obra', t: 'select', o: () => Store.all('obras').map(x => [x.id, x.id + ' · ' + x.nome]) }, { k: 'orcamentoId', l: 'Orçamento (itens e valores)', t: 'select', o: () => Store.all('orcamentos').map(x => [x.id, x.id + ' · ' + x.titulo]) },
-      { k: 'clienteIds', l: 'Contratante(s) / cliente(s)', t: 'multi', o: () => Store.all('pessoas').filter(p => p.tipo === 'Cliente' || (v.clienteIds || []).includes(p.id)).map(p => [p.id, p.nome]), full: 1 },
+      { k: 'clienteIds', l: 'Contratante(s) / cliente(s) — vêm da obra · Ctrl+clique para mais de um', t: 'multi', o: () => { const daObra = new Set(Store.all('obras').flatMap(x => x.clienteIds || [])); return Store.all('pessoas').filter(p => p.tipo === 'Cliente' || daObra.has(p.id) || (v.clienteIds || []).includes(p.id)).sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base' })).map(p => [p.id, p.nome]); }, full: 1 },
       { k: 'valor', l: 'Valor (R$)', t: 'money' }, { k: 'data', l: 'Data do documento', t: 'date' }, { k: 'cidade', l: 'Cidade da assinatura' }, { k: 'inicio', l: 'Início dos serviços', t: 'date' },
       { k: 'prazoDias', l: 'Prazo (dias)', t: 'number' }, { k: 'prazoMeses', l: 'Prazo (meses) – obras', t: 'number' }, { k: 'descontoPix', l: 'Desconto à vista no PIX (%)', t: 'number' }, { k: 'parcelas', l: 'Parcelas no cartão', t: 'number' },
       { k: 'objeto', l: 'Objeto (complementa o texto do modelo)', t: 'textarea', rows: 2, full: 1 },
@@ -118,7 +150,6 @@ Views.contratos = {
       { k: 'lindeiros', l: 'Lindeiros (termo de acesso) – "Nome – endereço" por linha', t: 'textarea', rows: 2, full: 1 }] });
     if (!d) return;
     const m = this.modelo(d.modelo);
-    if (m.categoria === 'Proposta' && d.numero) { const n = parseInt(d.numero, 10); if (n) Store.db.seq.PROP = Math.max(Store.db.seq.PROP || 0, n); }
     if (m.categoria === 'Recibo' && d.numero) { const n = parseInt(String(d.numero).replace(/\D/g, ''), 10); if (n) Store.db.seq.REC = Math.max(Store.db.seq.REC || 0, n); }
     const c = Store.insert('contratos', Object.assign({}, preset, d, { status: 'Rascunho', corpo: '' }));
     this.editor(c.id);
@@ -147,7 +178,7 @@ Views.contratos = {
     const tot = ets.reduce((a, x) => a + (+x.valor || 0), 0);
     const linhas = s => String(s || '').split('\n').map(x => x.trim()).filter(Boolean);
     const escopoL = linhas(ct.escopo).length ? linhas(ct.escopo).map(t => { const m = t.match(/^(.*?)\s*[–-]\s*(R\$\s*[\d.,]+)\s*$/); return m ? [m[1], m[2]] : [t, '']; })
-      : orc ? orc.itens.map(i => [i.desc + (i.un && !/verba|vb|un$/i.test(i.un) && i.qtd ? ` (${UI.num(i.qtd)} ${i.un})` : ''), money((+i.qtd || 0) * (+i.unit || 0) * (1 + ((+orc.bdi || 0) + (+orc.imposto || 0)) / 100))])
+      : orc ? itensAZ(orc.itens).map(i => [i.desc + (i.un && !/verba|vb|un$/i.test(i.un) && i.qtd ? ` (${UI.num(i.qtd)} ${i.un})` : ''), money((+i.qtd || 0) * (+i.unit || 0) * (1 + ((+orc.bdi || 0) + (+orc.imposto || 0)) / 100))])
       : ets.map(x => [x.nome, x.valor ? money(x.valor) : '']);
     const rom = arr => arr.length ? `<ol class="rom">${arr.map(x => `<li>${x};</li>`).join('')}</ol>` : '<p>________________</p>';
     const valor = +ct.valor || 0, pix = +ct.descontoPix || 0;
@@ -170,7 +201,7 @@ Views.contratos = {
       LISTA_ESCOPO: rom(escopoL.map(x => esc(x[0]))), LISTA_ESCOPO_VALORES: rom(escopoL.map(x => esc(x[0]) + (x[1] ? ' – <b>' + esc(x[1]) + '</b>' : ''))),
       LISTA_INCLUSO: `<ul class="chk">${(linhas(ct.incluso).length ? linhas(ct.incluso) : escopoL.map(x => x[0]).concat('Nota fiscal dos serviços prestados')).map(x => `<li>${esc(x)}</li>`).join('')}</ul>`,
       LISTA_NAO_INCLUSO: linhas(ct.naoIncluso).length ? `<ul class="nchk">${linhas(ct.naoIncluso).map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p>—</p>',
-      TABELA_ITENS: orc ? `<table class="dt"><thead><tr><th>#</th><th>Serviço</th><th class="n">Qtd</th><th>Un.</th>${ct.modelo === 'vtn_carta_proposta_obra' ? '' : '<th class="n">Unitário</th><th class="n">Total</th>'}</tr></thead><tbody>${orc.itens.map((i, k) => `<tr><td>${k + 1}</td><td>${esc(i.desc)}</td><td class="n">${UI.num(i.qtd)}</td><td>${esc(i.un)}</td>${ct.modelo === 'vtn_carta_proposta_obra' ? '' : `<td class="n">${money(i.unit)}</td><td class="n">${money(i.qtd * i.unit)}</td>`}</tr>`).join('')}</tbody></table>` : rom(escopoL.map(x => esc(x[0]) + (x[1] ? ' – ' + esc(x[1]) : ''))),
+      TABELA_ITENS: orc ? `<table class="dt"><thead><tr><th>#</th><th>Serviço</th><th class="n">Qtd</th><th>Un.</th>${ct.modelo === 'vtn_carta_proposta_obra' ? '' : '<th class="n">Unitário</th><th class="n">Total</th>'}</tr></thead><tbody>${itensAZ(orc.itens).map((i, k) => `<tr><td>${k + 1}</td><td>${esc(i.desc)}</td><td class="n">${UI.num(i.qtd)}</td><td>${esc(i.un)}</td>${ct.modelo === 'vtn_carta_proposta_obra' ? '' : `<td class="n">${money(i.unit)}</td><td class="n">${money(i.qtd * i.unit)}</td>`}</tr>`).join('')}</tbody></table>` : rom(escopoL.map(x => esc(x[0]) + (x[1] ? ' – ' + esc(x[1]) : ''))),
       TABELA_ETAPAS: ets.length ? `<table class="dt"><thead><tr><th>Etapa</th><th>Descrição</th><th class="n">Valor</th><th class="n">%</th><th>Previsão</th></tr></thead><tbody>${ets.map(x => `<tr><td>${x.ordem}</td><td>${esc(x.nome)}</td><td class="n">${money(x.valor)}</td><td class="n">${UI.pct(tot ? x.valor / tot * 100 : 0)}</td><td>${date(x.fimPrev)}</td></tr>`).join('')}</tbody></table>` : '',
       TABELA_ACABAMENTOS: `<table class="dt"><thead><tr><th>Local / item</th><th>Material</th><th class="n">Faixa de preço</th></tr></thead><tbody>${(ct.acabamentos || [['Revestimento piso', 'Porcelanato', 'Até R$ 90,00/m²'], ['Revestimento parede', 'Porcelanato', 'Até R$ 60,00/m²'], ['Pias e bancadas', 'Granito', 'Até R$ 3.000,00'], ['Lavatórios', 'Granito', 'Até R$ 800,00 cada'], ['Tanque lavanderia', 'A definir', 'Até R$ 400,00'], ['Vasos sanitários', 'Cerâmico', 'Até R$ 800,00 cada'], ['Torneiras tanque', 'A definir', 'Até R$ 50,00 cada'], ['Torneira cozinha', 'A definir', 'Até R$ 150,00 cada'], ['Torneira lavatório', 'A definir', 'Até R$ 100,00 cada'], ['Acabamento de registro interno', 'Cromado', 'Até R$ 25,00 cada'], ['Pintura externa', 'Tinta acrílica', '—'], ['Pintura interna', 'Tinta látex', '—'], ['Porta interna', 'Prancheta', '—'], ['Porta externa', 'Madeira maciça', 'Até R$ 1.500,00 cada'], ['Maçaneta porta interna', 'A definir', 'Até R$ 50,00 cada'], ['Maçaneta porta externa', 'A definir', 'Até R$ 80,00'], ['Puxador porta externa', 'A definir', 'Até R$ 80,00'], ['Rebaixamento forro', 'Aramado simples', '—'], ['Lâmpadas', 'Painel LED 30x30', 'Até R$ 20,00 cada'], ['Vidros', 'Blindex incolor', '—']]).map(r => `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="n">${esc(r[2])}</td></tr>`).join('')}</tbody></table>`,
       TABELA_CNO: fx.length ? `<table class="dt"><thead><tr><th>Mês</th><th class="n">Recebido com NF</th><th class="n">Despesas no CNO</th></tr></thead><tbody>${fx.map(x => `<tr><td>${Calc.mesLabel(x.mes)}</td><td class="n">${x.receita ? money(x.receita) : 'sem recebíveis'}</td><td class="n">${money(x.despesa)}</td></tr>`).join('')}</tbody><tfoot><tr><td>Total</td><td class="n">${money(fx.reduce((a, x) => a + x.receita, 0))}</td><td class="n">${money(fx.reduce((a, x) => a + x.despesa, 0))}</td></tr></tfoot></table>` : '<p>Sem lançamentos.</p>',
@@ -202,10 +233,12 @@ Views.contratos = {
         <label class="btn sm">${icon('upload')} Anexar assinado<input type="file" id="cup" hidden></label>${anex.map(a => `<span class="badge ok" data-goto="${a.id}" style="cursor:pointer">${icon('paperclip')} ${esc(a.nome)}</span>`).join('')}
         <span class="tiny muted" style="margin-left:auto">${mod.vtn ? '<span class="badge brand">Modelo VTN</span> ' : ''}Clique no texto para editar</span></div>
         <div class="doc-stage"><div class="vdoc" id="cdoc"><div contenteditable="false">${this.papel(mod, ct)}</div><div id="cbody" contenteditable="true">${Store.get('contratos', id).corpo}</div><div contenteditable="false">${this.rodape()}</div></div></div>`,
-      footer: `<button class="btn danger" data-del style="margin-right:auto">${icon('trash-2')}</button><button class="btn" data-doc>${icon('file-down')} Baixar Word</button><button class="btn" data-pr>${icon('printer')} Imprimir / PDF</button><button class="btn primary" data-sv>${icon('save')} Salvar</button>` });
+      footer: `<button class="btn danger" data-del style="margin-right:auto">${icon('trash-2')}</button><button class="btn" data-doc>${icon('file-down')} Baixar Word</button><button class="btn" data-pr>${icon('printer')} Imprimir / PDF</button><button class="btn" data-so title="Grava o PDF na pasta da obra no drive (fase certa pelo tipo do documento)">${icon('folder-input')} Salvar na pasta da obra</button><button class="btn primary" data-sv>${icon('save')} Salvar</button>` });
     const save = () => Store.update('contratos', id, { corpo: m.$('#cbody').innerHTML, status: m.$('#cst').value });
     m.$('[data-sv]').onclick = () => { save(); m.close(); UI.toast('Documento salvo'); App.refresh(); };
-    m.$('[data-pr]').onclick = () => { save(); UI.print(m.$('#cdoc').outerHTML, ct.titulo); };
+    const naPasta = avisar => { const x = Store.get('contratos', id); const cat = this.categoriaDe(x); return Drive.salvarDoc(x.obraId, { corpo: m.$('#cdoc').outerHTML, titulo: x.titulo, categoria: cat, arquivo: [cat.toUpperCase(), x.numero ? String(x.numero).replace('/', '-') : x.id, x.titulo, new Date().toISOString().slice(0, 10)].filter(Boolean).join('_').replace(/[^\wÀ-ú\- ]+/g, '').trim().replace(/\s+/g, '_').slice(0, 120), avisar }); };
+    m.$('[data-pr]').onclick = () => { save(); UI.print(m.$('#cdoc').outerHTML, ct.titulo); naPasta(false); };
+    m.$('[data-so]').onclick = () => { save(); naPasta(true); };
     m.$('[data-doc]').onclick = () => { save(); UI.download(ct.titulo.replace(/[^\wÀ-ú\-]+/g, '_') + '.doc', `<html><head><meta charset="utf-8"><style>${this.WORD_CSS}</style></head><body>${m.$('#cdoc').outerHTML}</body></html>`, 'application/msword'); };
     m.$('[data-del]').onclick = async () => { if (await UI.confirm('Excluir documento?')) { Store.remove('contratos', id); m.close(); App.refresh(); } };
     m.$('#creg').onclick = async () => { if (await UI.confirm('Substituir o texto atual pelo modelo com os dados atualizados?')) { m.$('#cbody').innerHTML = this.gerar(Store.get('contratos', id)); } };

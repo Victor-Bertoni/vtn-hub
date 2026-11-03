@@ -7,7 +7,7 @@
    ========================================================= */
 window.CONFIG = {
   appName: 'VTN Hub',
-  APP_VERSION: '2026.11.03-1920',   // muda a cada atualização publicada
+  APP_VERSION: '2026.11.03-2030',   // muda a cada atualização publicada
   appTagline: 'Gestão de obras e engenharia',
   AUTH: {
     enabled: true,            // login obrigatório (desligue com false)
@@ -101,3 +101,8 @@ window.CAIXA_SERVICOS = [
   ['Complementos', 0.24, 2.29],
   ['Outros Serviços', 0, 10.00]
 ];
+
+/* itens de orçamento/proposta em ordem alfabética (só na hora de mostrar o documento) */
+window.itensAZ = L => (L || []).slice().sort((a, b) => String(a.desc || '').localeCompare(String(b.desc || ''), 'pt-BR', { sensitivity: 'base', numeric: true }));
+/* clientes de um orçamento/documento: vários (clienteIds); compatível com o campo antigo clienteId */
+window.clientesDe = x => (x && Array.isArray(x.clienteIds) && x.clienteIds.length ? x.clienteIds : (x && x.clienteId ? [x.clienteId] : []));

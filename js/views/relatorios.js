@@ -246,7 +246,7 @@ Views.relatorios = {
     if (s.tipo === 'funil') {
       const O = Store.all('obras'); const st = {}; O.forEach(o => { st[o.status] = st[o.status] || [0, 0]; st[o.status][0]++; st[o.status][1] += +o.valorContrato || 0; });
       return `${this.rhead('FUNIL COMERCIAL', date(UI.today()))}<h1>Funil comercial e carteira</h1>${tbl(['Status', 'Quantidade', 'Valor contratado'], Object.entries(st).map(([k, v]) => [k, v[0], money(v[1])]))}
-        <h2>Orçamentos</h2>${tbl(['ID', 'Título', 'Cliente', 'Data', 'Status', 'Total'], Store.all('orcamentos').map(o => [o.id, esc(o.titulo), esc((Store.get('pessoas', o.clienteId) || {}).nome || ''), date(o.data), o.status, money(Calc.orcTotal(o).total)]))}`;
+        <h2>Orçamentos</h2>${tbl(['ID', 'Título', 'Cliente', 'Data', 'Status', 'Total'], Store.all('orcamentos').map(o => [o.id, esc(o.titulo), esc(clientesDe(o).map(c => (Store.get('pessoas', c) || {}).nome).filter(Boolean).join(', ')), date(o.data), o.status, money(Calc.orcTotal(o).total)]))}`;
     }
     if (s.tipo === 'recebiveis') {
       const L = Store.where('lancamentos', l => l.status !== 'pago' && (!s.obra || l.obraId === s.obra));

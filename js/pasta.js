@@ -146,6 +146,8 @@
   };
   const pronto = new Promise(r => { prontoRes = r; });
   window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, trocar: () => escolher(true), suportado, get servidor() { return modo === 'http'; }, get copia() { return modo === 'copia'; },
+    async enviarArquivo(rota, blob) { const r = await api(rota, { method: 'PUT', body: blob }); let j = {}; try { j = await r.json(); } catch (e) {} if (!r.ok || !j.ok) throw new Error(j.erro || ('HTTP ' + r.status)); return j; },
+    async enviar(rota, dados) { const r = await api(rota, { method: 'POST', body: JSON.stringify(dados) }); let j = {}; try { j = await r.json(); } catch (e) {} if (!r.ok || !j.ok) throw new Error(j.erro || ('HTTP ' + r.status)); return j; },
     sair() { try { if (modo === 'http') api('sair'); localStorage.removeItem(LST); localStorage.removeItem(DK_LS); } catch (e) {} },
     async abrir(caminho) {   // abre um arquivo da pasta (ex.: cub\tabela.pdf)
       await pronto;

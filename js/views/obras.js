@@ -128,7 +128,7 @@ Views.obras = {
     const d = await UI.formModal({ title: id ? `Editar ${id}` : 'Nova obra / serviço', list: this.fields(), values: o, wide: true,
       onDelete: id && Auth.can('config') ? () => { Store.remove('obras', id); UI.toast('Obra excluída'); location.hash = '#/obras'; } : null });
     if (!d) return;
-    if (id) { Store.update('obras', id, d); UI.toast('Obra atualizada'); App.refresh(); return; }
+    if (id) { Store.update('obras', id, d); UI.toast('Obra atualizada'); if (window.Drive) Drive.criarPasta(Store.get('obras', id)); App.refresh(); return; }
     let newId;
     if (d.numero && /^\d+$/.test(d.numero)) {
       newId = 'OB-' + d.numero.padStart(4, '0');
@@ -138,6 +138,7 @@ Views.obras = {
     const n = Store.insert('obras', Object.assign(d, newId ? { id: newId } : {}, { equipe: [] }));
     if (!n.numero) Store.update('obras', n.id, { numero: String(+n.id.split('-')[1]) });
     UI.toast('Obra criada: ' + n.id);
+    if (window.Drive) Drive.criarPasta(Store.get('obras', n.id)).then(c => { if (c) UI.toast('Pasta criada no drive: 00_SERVIÇOS › ' + c); });
     location.hash = '#/obra/' + n.id;
   }
 };

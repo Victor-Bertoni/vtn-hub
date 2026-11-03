@@ -98,6 +98,7 @@ window.Store = (() => {
     for (const f of fileList) {
       const rec = insert('arquivos', Object.assign({ nome: f.name, tamanho: f.size, mime: f.type, data: new Date().toISOString().slice(0, 10), temBlob: true, origem: 'Enviado no app' }, meta));
       try { await Files.put(rec.id, f); } catch (e) { rec.temBlob = false; rec.origem = 'Falha ao gravar'; save(); }
+      if (window.Drive) Drive.anexar(rec, f).then(c => { if (c) { rec.drive = c; save(); } });   // cópia na pasta da obra no drive
       out.push(rec);
     }
     return out;

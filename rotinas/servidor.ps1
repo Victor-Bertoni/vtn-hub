@@ -100,6 +100,65 @@ function Conferir-Sessao($s) {
   $s.papel = $u.papel; return $s
 }
 
+# ---------- orçamento na pasta da obra (OneDrive\00_VTN\00_SERVIÇOS\<nº> - <NOME>\..COMERCIAL) ----------
+# Só cria arquivos e pastas novos; nunca substitui nem apaga nada.
+$Servicos = Join-Path $OneDrive '00_VTN\00_SERVIÇOS'
+$FasesObra = @{ COMERCIAL = '01_COMERCIAL'; 'EXECUÇÃO' = '02_EXECUÇÃO'; ENTREGA = '03_ENTREGA' }
+# acha (ou cria) a pasta da obra: 00_SERVIÇOS\<nº> - <NOME>  (+ 01_COMERCIAL, 02_EXECUÇÃO, 03_ENTREGA quando é nova)
+function Pasta-DaObra([int]$numero, [string]$nome, [switch]$Criar) {
+  if (-not (Test-Path -LiteralPath $Servicos)) { throw "pasta 00_SERVIÇOS não encontrada" }
+  $pasta = Get-ChildItem -LiteralPath $Servicos -Directory | Where-Object { $_.Name -match '^\s*0*(\d+)\s*-' -and [int]$Matches[1] -eq $numero } | Select-Object -First 1
+  if (-not $pasta) {
+    if (-not $Criar) { return $null }
+    $limpo = (($nome -replace '[\\/:*?"<>|]', '') -replace '\s+', ' ').Trim().ToUpper()
+    if (-not $limpo) { $limpo = 'OBRA' }
+    $pasta = New-Item -ItemType Directory -Path (Join-Path $Servicos ("$numero - $limpo"))
+    foreach ($f in $FasesObra.Values) { New-Item -ItemType Directory -Force -Path (Join-Path $pasta.FullName $f) | Out-Null }
+    Escrever-Log "Pasta da obra criada: $($pasta.Name)"
+  }
+  return $pasta
+}
+# subpasta da fase (aceita 00_COMERCIAL / 01_COMERCIAL etc.); cria a padrão se faltar
+function Pasta-DaFase($pasta, [string]$fase) {
+  if (-not $fase) { return $pasta }
+  $chave = if ($fase -like '*COMERC*') { 'COMERCIAL' } elseif ($fase -like '*EXECU*') { 'EXECUÇÃO' } elseif ($fase -like '*ENTREG*') { 'ENTREGA' } else { '' }
+  if (-not $chave) { return $pasta }
+  $padrao = if ($chave -eq 'EXECUÇÃO') { '*EXECU*' } else { "*$chave*" }
+  $sub = Get-ChildItem -LiteralPath $pasta.FullName -Directory | Where-Object { $_.Name -like $padrao } | Select-Object -First 1
+  if (-not $sub) { $sub = New-Item -ItemType Directory -Path (Join-Path $pasta.FullName $FasesObra[$chave]) }
+  return $sub
+}
+# grava um arquivo NOVO na pasta da obra (nunca substitui: acrescenta (2), (3)...)
+#   html  -> vira PDF pelo Edge/Chrome (ou fica .html se não houver navegador)
+#   bytes -> grava como veio (anexos)
+function Salvar-NaObra([int]$numero, [string]$nome, [string]$arquivo, [string]$html, [string]$fase = 'COMERCIAL', [string]$sub = '', [byte[]]$bytes = $null) {
+  $pasta = Pasta-DaObra $numero $nome -Criar
+  $dest = Pasta-DaFase $pasta $fase
+  foreach ($parte in ("$sub" -split '[\\/]' | Where-Object { $_ -and $_ -ne '.' -and $_ -ne '..' })) {
+    $p = ($parte -replace '[:*?"<>|]', '_').Trim(); if (-not $p) { continue }
+    $dest = New-Item -ItemType Directory -Force -Path (Join-Path $dest.FullName $p)
+  }
+  $limpo = ($arquivo -replace '[\\/:*?"<>|]', '_').Trim()
+  if ($bytes) { $ext = [IO.Path]::GetExtension($limpo); $base = [IO.Path]::GetFileNameWithoutExtension($limpo) } else { $ext = '.pdf'; $base = $limpo }
+  $destino = Join-Path $dest.FullName "$base$ext"; $k = 2
+  while ((Test-Path -LiteralPath $destino) -or (-not $bytes -and (Test-Path -LiteralPath ([IO.Path]::ChangeExtension($destino, '.html'))))) { $destino = Join-Path $dest.FullName "$base ($k)$ext"; $k++ }
+  if ($bytes) { [IO.File]::WriteAllBytes($destino, $bytes) }
+  else {
+    $tmp = Join-Path $env:TEMP ('vtn_doc_' + [guid]::NewGuid().ToString('N') + '.html')
+    [IO.File]::WriteAllText($tmp, $html, $utf8)
+    $nav = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($nav) {
+      $perfil = Join-Path $env:TEMP 'vtn_pdf_perfil'
+      Start-Process -FilePath $nav -ArgumentList @('--headless', '--disable-gpu', '--no-pdf-header-footer', "--user-data-dir=`"$perfil`"", "--print-to-pdf=`"$destino`"", ([Uri]$tmp).AbsoluteUri) -WindowStyle Hidden -Wait
+    }
+    if (-not (Test-Path -LiteralPath $destino)) { $destino = [IO.Path]::ChangeExtension($destino, '.html'); Copy-Item -LiteralPath $tmp -Destination $destino }
+    Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+  }
+  $rel = $destino.Substring($pasta.Parent.FullName.Length + 1)
+  Escrever-Log "Documento salvo na obra: $rel"
+  return $rel
+}
+
 # ---------- atualização do programa pelo GitHub ----------
 $ultimaConferencia = [datetime]::MinValue
 function Atualizar-Programa {
@@ -184,6 +243,30 @@ while ($l.IsListening) {
       if ($req.HttpMethod -ne 'PUT' -or -not $a0 -or (Test-Path -LiteralPath $a0)) { Json $ctx @{ erro = 'sem permissao' } 403; continue }
     }
 
+    if ($rota -eq '/api/salvar-na-obra' -and $req.HttpMethod -eq 'POST') {   # só administradores
+      if ($sessao.papel -ne 'admin') { Json $ctx @{ erro = 'sem permissao' } 403; continue }
+      $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json
+      try {
+        $b = if ($c.base64) { [Convert]::FromBase64String("$($c.base64)") } else { $null }
+        $fase = if ($c.fase) { "$($c.fase)" } else { 'COMERCIAL' }
+        $onde = Salvar-NaObra ([int]$c.numero) "$($c.nome)" "$($c.arquivo)" "$($c.html)" $fase "$($c.sub)" $b
+        Json $ctx @{ ok = $true; caminho = $onde }
+      }
+      catch { Json $ctx @{ ok = $false; erro = $_.Exception.Message } 500 }
+      continue
+    }
+    if ($rota -eq '/api/obra-arquivo' -and $req.HttpMethod -eq 'PUT') {   # anexo enviado no app -> mesma pasta dentro da obra no drive (só administradores)
+      if ($sessao.papel -ne 'admin') { Json $ctx @{ erro = 'sem permissao' } 403; continue }
+      try { $onde = Salvar-NaObra ([int]$q['numero']) "$($q['nome'])" "$($q['arquivo'])" '' "$($q['fase'])" "$($q['sub'])" (Ler-Corpo $req); Json $ctx @{ ok = $true; caminho = $onde } }
+      catch { Json $ctx @{ ok = $false; erro = $_.Exception.Message } 500 }
+      continue
+    }
+    if ($rota -eq '/api/criar-pasta-obra' -and $req.HttpMethod -eq 'POST') {   # obra nova: cria a pasta no drive (só administradores)
+      if ($sessao.papel -ne 'admin') { Json $ctx @{ erro = 'sem permissao' } 403; continue }
+      $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json
+      try { $p = Pasta-DaObra ([int]$c.numero) "$($c.nome)" -Criar; Json $ctx @{ ok = $true; caminho = $p.Name } } catch { Json $ctx @{ ok = $false; erro = $_.Exception.Message } 500 }
+      continue
+    }
     if ($rota -eq '/api/lista') {                       # documentos de uma coleção: id + data de modificação
       $dir = Caminho-Seguro $Banco $q['p']; $itens = @()
       if ($dir -and (Test-Path $dir)) { $itens = @(Get-ChildItem -LiteralPath $dir -File -Filter '*.json' | Where-Object { $_.Name -notlike '~*' } | ForEach-Object { @{ id = $_.BaseName; mod = [int64]($_.LastWriteTimeUtc - [datetime]'1970-01-01').TotalMilliseconds } }) }
