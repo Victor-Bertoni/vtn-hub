@@ -128,7 +128,7 @@ Views.contratos = {
       const md = [...document.querySelectorAll('.modal')].pop(); if (!md) return;
       const so = md.querySelector('[name="obraId"]'); if (!so) return;
       so.addEventListener('change', () => {
-        const ob = Store.get('obras', so.value); if (!ob) return;
+        const ob = Store.get('obras', so.value); if (!ob) { this.trocarClientes(md, ''); return; }
         const ti = md.querySelector('[name="titulo"]'); if (ti) ti.value = ob.nome;
         this.trocarClientes(md, ob.id);
         const ci = md.querySelector('[name="cidade"]'); if (ci && ob.cidade) ci.value = ob.cidade;
@@ -139,7 +139,7 @@ Views.contratos = {
       { k: 'modelo', l: 'Modelo', t: 'select', o: opts, req: 1, blank: false, full: 1 },
       { k: 'titulo', l: 'Título / assunto', req: 1 }, { k: 'numero', l: 'Nº da proposta / recibo', ph: 'ex.: 180/2026' },
       { k: 'obraId', l: 'Obra', t: 'select', o: () => Store.all('obras').map(x => [x.id, x.id + ' · ' + x.nome]) }, { k: 'orcamentoId', l: 'Orçamento (itens e valores)', t: 'select', o: () => Store.all('orcamentos').map(x => [x.id, x.id + ' · ' + x.titulo]) },
-      { k: 'clienteIds', l: 'Contratante(s) / cliente(s) — vêm da obra · Ctrl+clique para mais de um', t: 'multi', o: () => this.clientesOpc(v.obraId, v.clienteIds), full: 1 },
+      { k: 'clienteIds', l: 'Contratante(s) — clientes cadastrados na obra · Ctrl+clique para mais de um', t: 'multi', o: () => this.clientesOpc(v.obraId, v.clienteIds), full: 1 },
       { k: 'valor', l: 'Valor (R$)', t: 'money' }, { k: 'data', l: 'Data do documento', t: 'date' }, { k: 'cidade', l: 'Cidade da assinatura' }, { k: 'inicio', l: 'Início dos serviços', t: 'date' },
       { k: 'prazoDias', l: 'Prazo (dias)', t: 'number' }, { k: 'prazoMeses', l: 'Prazo (meses) – obras', t: 'number' }, { k: 'descontoPix', l: 'Desconto à vista no PIX (%)', t: 'number' }, { k: 'parcelas', l: 'Parcelas no cartão', t: 'number' },
       { k: 'objeto', l: 'Objeto (complementa o texto do modelo)', t: 'textarea', rows: 2, full: 1 },
@@ -244,27 +244,28 @@ Views.contratos = {
     m.$('#cdat').onclick = () => { save(); m.close(); this.dados(id); };
     m.$('#cup').onchange = async e => { const o = Store.get('contratos', id); await Store.uploadFiles([...e.target.files], { obraId: o.obraId, pasta: '00_COMERCIAL', contratoId: id }); Store.update('contratos', id, { status: 'Assinado' }); UI.toast('Documento assinado anexado'); m.close(); this.editor(id); };
   },
-  // contratantes = só os clientes da obra do documento (+ os já marcados); sem obra ou obra sem cliente: pessoas do tipo Cliente
+  // qualquer lista de clientes vem SÓ da obra (clientes cadastrados nela) + os já marcados no registro; nunca do banco inteiro
   clientesOpc(obraId, sel) {
     const ob = obraId && Store.get('obras', obraId);
-    const ids = [...new Set([...((ob && ob.clienteIds) || []), ...(sel || [])])];
-    const ps = ids.length ? ids.map(i => Store.get('pessoas', i)).filter(Boolean) : Store.all('pessoas').filter(p => p.tipo === 'Cliente');
-    return ps.sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base' })).map(p => [p.id, p.nome]);
+    const ids = [...new Set([...((ob && ob.clienteIds) || []), ...(sel || []).filter(Boolean)])];
+    return ids.map(i => Store.get('pessoas', i)).filter(Boolean).sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base' })).map(p => [p.id, p.nome]);
   },
-  trocarClientes(md, obraId) {
-    const sc = md.querySelector('[name="clienteIds"]'); if (!sc) return;
-    const ob = Store.get('obras', obraId); const daObra = (ob && ob.clienteIds) || [];
-    sc.innerHTML = ''; this.clientesOpc(obraId, []).forEach(([v, t]) => { const o = new Option(t, v); o.selected = daObra.includes(v); sc.add(o); });
+  trocarClientes(md, obraId, campo = 'clienteIds') {
+    const sc = md.querySelector(`[name="${campo}"]`); if (!sc) return;
+    const daObra = ((Store.get('obras', obraId) || {}).clienteIds) || [];
+    sc.innerHTML = ''; if (!sc.multiple) sc.add(new Option('', ''));
+    this.clientesOpc(obraId, []).forEach(([v, t], k) => { const o = new Option(t, v); o.selected = sc.multiple ? daObra.includes(v) : k === 0; sc.add(o); });
+    if (!daObra.length) UI.toast('Esta obra não tem cliente cadastrado. Cadastre o cliente na obra.', 'err');
   },
   async dados(id) {
     const c = Store.get('contratos', id);
     setTimeout(() => {
       const md = [...document.querySelectorAll('.modal')].pop(); const so = md && md.querySelector('[name="obraId"]'); if (!so) return;
-      so.addEventListener('change', () => { if (so.value) this.trocarClientes(md, so.value); });
+      so.addEventListener('change', () => this.trocarClientes(md, so.value));
     }, 60);
     const d = await UI.formModal({ title: 'Dados do documento ' + id, wide: true, values: c, list: [{ k: 'titulo', l: 'Título', req: 1 }, { k: 'numero', l: 'Número' }, { k: 'modelo', l: 'Modelo', t: 'select', o: () => this.modelos().map(m => [m.id, m.categoria + ' · ' + m.nome]), blank: false, full: 1 },
       { k: 'obraId', l: 'Obra', t: 'select', o: () => Store.all('obras').map(x => [x.id, x.id + ' · ' + x.nome]) }, { k: 'orcamentoId', l: 'Orçamento', t: 'select', o: () => Store.all('orcamentos').map(x => [x.id, x.id + ' · ' + x.titulo]) },
-      { k: 'clienteIds', l: 'Contratante(s) — clientes da obra (para outro contratante, cadastre-o na obra)', t: 'multi', o: () => this.clientesOpc(c.obraId, c.clienteIds), full: 1 },
+      { k: 'clienteIds', l: 'Contratante(s) — clientes cadastrados na obra · Ctrl+clique para mais de um', t: 'multi', o: () => this.clientesOpc(c.obraId, c.clienteIds), full: 1 },
       { k: 'valor', l: 'Valor', t: 'money' }, { k: 'data', l: 'Data', t: 'date' }, { k: 'cidade', l: 'Cidade' }, { k: 'inicio', l: 'Início', t: 'date' }, { k: 'prazoDias', l: 'Prazo dias', t: 'number' }, { k: 'prazoMeses', l: 'Prazo meses', t: 'number' },
       { k: 'descontoPix', l: 'Desconto PIX (%)', t: 'number' }, { k: 'parcelas', l: 'Parcelas cartão', t: 'number' },
       { k: 'objeto', l: 'Objeto', t: 'textarea', rows: 2, full: 1 }, { k: 'escopo', l: 'Escopo (um por linha)', t: 'textarea', rows: 4, full: 1 }, { k: 'naoIncluso', l: 'Não incluso', t: 'textarea', rows: 3, full: 1 }, { k: 'incluso', l: 'Incluso', t: 'textarea', rows: 2, full: 1 },

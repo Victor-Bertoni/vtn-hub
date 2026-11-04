@@ -201,7 +201,7 @@ Views.financeiro = {
       { k: 'descricao', l: 'Descrição', req: 1, full: 1 },
       { k: 'valor', l: 'Valor (R$)', t: 'money', req: 1 },
       { k: 'obraId', l: 'Obra', t: 'select', o: () => Store.all('obras').map(o => [o.id, o.id + ' · ' + o.nome]) },
-      { k: 'pessoaId', l: tipo === 'receita' ? 'Pagador (cliente)' : 'Fornecedor / favorecido', t: 'select', o: () => Store.all('pessoas').map(p => [p.id, p.nome]) },
+      { k: 'pessoaId', l: tipo === 'receita' ? 'Pagador (cliente da obra)' : 'Fornecedor / favorecido', t: 'select', o: () => tipo === 'receita' ? Views.contratos.clientesOpc(l.obraId, [l.pessoaId]) : Store.all('pessoas').map(p => [p.id, p.nome]) },
       { k: 'forma', l: 'Forma de pagamento', t: 'select', o: LISTAS.formaPgto },
       { k: 'data', l: 'Competência', t: 'date' }, { k: 'vencimento', l: 'Vencimento', t: 'date' },
       { k: 'status', l: 'Situação', t: 'select', o: [['pago', tipo === 'receita' ? 'Recebido' : 'Pago'], ['pendente', 'Pendente']], blank: false },
@@ -216,6 +216,7 @@ Views.financeiro = {
     const p = UI.formModal({ title: id ? `${id} – ${tipo === 'receita' ? 'Receita' : 'Despesa'}` : (tipo === 'receita' ? 'Nova receita' : 'Nova despesa'), list, values: l, extra,
       onDelete: id && Auth.can('financeiro.editar') ? () => { Store.remove('lancamentos', id); App.refresh(); } : null });
     setTimeout(() => { const rb = document.getElementById('lrec'); if (rb) rb.onclick = () => Views.financeiro.recibo(id); const fi = document.getElementById('lfile'); if (fi) fi.onchange = () => fileHolder.files = [...fi.files];
+      const so = document.querySelector('.modal [name="obraId"]'); if (so && tipo === 'receita') so.addEventListener('change', () => Views.contratos.trocarClientes(so.closest('.modal'), so.value, 'pessoaId'));
       const ts = document.querySelector('.modal [name="tipo"]'); if (ts) ts.onchange = () => { document.querySelector('.modal-bg').remove(); this.edit(id, Object.assign({}, l, { tipo: ts.value, categoria: '' })); }; }, 50);
     const d = await p; if (!d) return;
     if (d.status === 'pago' && !d.dataPagamento) d.dataPagamento = d.vencimento || d.data;
