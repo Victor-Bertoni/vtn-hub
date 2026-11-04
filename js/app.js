@@ -56,8 +56,9 @@ window.App = (() => {
     ['impostos', 'Impostos e obrigações', 'landmark', 'financeiro.ver'],
     ['enquadramento', 'Enquadramento ao vivo', 'activity', 'financeiro.ver'],
     ['orcamentos', 'Orçamentos', 'calculator', 'orcamentos'],
+    ['propostas', 'Propostas comerciais', 'send', 'contratos'],
+    ['contratos', 'Contratos, termos e recibos', 'file-signature', 'contratos'],
     ['composicoes', 'Composições e CUB', 'layers', 'orcamentos'],
-    ['contratos', 'Contratos e propostas', 'file-signature', 'contratos'],
     ['relatorios', 'Central de relatórios', 'file-bar-chart', 'relatorios'],
     ['Pessoas'],
     ['pessoas', 'Clientes e equipe', 'users', 'pessoas'],
@@ -107,7 +108,8 @@ window.App = (() => {
       ['financeiro.editar', 'arrow-down-circle', 'Receita', () => Views.financeiro.edit(null, { tipo: 'receita' })],
       ['financeiro.editar', 'arrow-up-circle', 'Despesa', () => Views.financeiro.edit(null, { tipo: 'despesa' })],
       ['orcamentos', 'calculator', 'Orçamento', () => Views.orcamentos.novo()],
-      ['contratos', 'file-signature', 'Contrato / proposta', () => Views.contratos.novo()],
+      ['contratos', 'send', 'Proposta comercial', () => Views.propostas.novo()],
+      ['contratos', 'file-signature', 'Contrato / termo / recibo', () => Views.contratos.novo()],
       ['pessoas', 'user-plus', 'Pessoa', () => Views.pessoas.edit()],
       ['calendario', 'calendar-plus', 'Evento', () => Views.calendario.edit()]
     ].filter(i => Auth.can(i[0]));

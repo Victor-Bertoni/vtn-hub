@@ -6,6 +6,9 @@
    ========================================================= */
 Views.contratos = {
   perm: 'contratos',
+  // esta página: contratos, termos, recibos e declarações. As propostas comerciais têm página própria (Views.propostas, no fim do arquivo)
+  chave: 'contratos', so: 'outros',
+  pertence(cat) { return this.so === 'Proposta' ? cat === 'Proposta' : this.so === 'outros' ? cat !== 'Proposta' : true; },
   st: { tab: 'lista', cat: '', q: '' },
   CATS: { Contrato: ['file-signature', '#18c20e'], Proposta: ['send', '#2563eb'], Termo: ['clipboard-check', '#7c3aed'], Recibo: ['receipt', '#16a34a'], Declaração: ['stamp', '#0891b2'] },
   VARS: ['DATA', 'DATA_EXTENSO', 'ANO', 'CIDADE_ASSINATURA', 'FORO', 'TITULO', 'NUMERO', 'PROPOSTA_REF', 'CLIENTES_QUALIFICACAO', 'CLIENTES_NOMES', 'CLIENTE_SAUDACAO', 'EMPRESA_NOME', 'EMPRESA_CNPJ', 'EMPRESA_SEDE', 'EMPRESA_ESCRITORIO', 'EMPRESA_CONTATO', 'REPRESENTANTE_QUALIFICACAO', 'SOCIOS_QUALIFICACAO',
@@ -18,18 +21,18 @@ Views.contratos = {
 
   render(el, tab) {
     const { icon, esc, money, date } = UI; const s = this.st; if (tab) s.tab = tab;
-    const M = this.modelos();
-    const l = Store.all('contratos').slice().sort((a, b) => (b.data || '').localeCompare(a.data || '') || b.id.localeCompare(a.id));
-    const catDe = x => (M.find(m => m.id === x.modelo) || {}).categoria || 'Contrato';
-    const tot = st => l.filter(x => catDe(x) === 'Contrato' && (!st || x.status === st)).reduce((a, x) => a + (+x.valor || 0), 0);
+    const M = this.modelos().filter(m => this.pertence(m.categoria)); const P = this.so === 'Proposta';
+    const catDe = x => this.categoriaDe(x) || 'Contrato';
+    const l = Store.all('contratos').filter(x => this.pertence(catDe(x))).sort((a, b) => (b.data || '').localeCompare(a.data || '') || b.id.localeCompare(a.id));
+    const tot = st => l.filter(x => catDe(x) === (P ? 'Proposta' : 'Contrato') && (!st || x.status === st)).reduce((a, x) => a + (+x.valor || 0), 0);
     el.innerHTML = `
-      <div class="hero hero-doc"><div><div class="hero-kicker">${icon('file-signature')} Documentos da VTN</div><h1>Contratos, propostas e termos</h1>
-        <p>Modelos oficiais da VTN (os mais recentes de cada tipo) e modelos do app – preenchidos com os dados da obra, do cliente e do orçamento, em papel timbrado.</p></div>
+      <div class="hero hero-doc"><div><div class="hero-kicker">${icon(P ? 'send' : 'file-signature')} Documentos da VTN</div><h1>${P ? 'Propostas comerciais' : 'Contratos, termos e recibos'}</h1>
+        <p>${P ? 'Propostas geradas a partir do orçamento, com os dados da obra e do cliente, em papel timbrado. Os contratos ficam na página Contratos.' : 'Contratos, termos, recibos e declarações nos modelos da VTN, preenchidos com os dados da obra e do cliente. As propostas comerciais ficam na página Propostas.'}</p></div>
         <div class="hero-side"><div><span>Documentos</span><b>${l.length}</b><small>${l.filter(x => x.status === 'Assinado').length} assinados</small></div>
-          <div><span>Contratos assinados</span><b>${UI.moneyK(tot('Assinado'))}</b><small>em aberto ${UI.moneyK(tot('Enviado') + tot('Rascunho'))}</small></div>
+          <div><span>${P ? 'Propostas aceitas' : 'Contratos assinados'}</span><b>${UI.moneyK(tot('Assinado'))}</b><small>em aberto ${UI.moneyK(tot('Enviado') + tot('Rascunho'))}</small></div>
           <div><span>Modelos</span><b>${M.length}</b><small>${M.filter(m => m.vtn).length} da VTN</small></div></div></div>
       <div class="pill-tabs"><button class="${s.tab === 'lista' ? 'active' : ''}" data-t="lista">${icon('list')} Documentos (${l.length})</button><button class="${s.tab === 'mod' ? 'active' : ''}" data-t="mod">${icon('layout-template')} Visualizar modelos (${M.length})</button><button class="${s.tab === 'vars' ? 'active' : ''}" data-t="vars">${icon('braces')} Variáveis</button>
-        <button class="btn sm primary" style="margin-left:auto" onclick="Views.contratos.novo()">${icon('plus')} Gerar documento</button></div>
+        <button class="btn sm primary" style="margin-left:auto" onclick="Views.${this.chave}.novo()">${icon('plus')} ${P ? 'Nova proposta' : 'Gerar documento'}</button></div>
       <div id="cc"></div>`;
     UI.$$('[data-t]', el).forEach(b => b.onclick = () => { s.tab = b.dataset.t; App.refresh(); });
     const c = UI.$('#cc', el);
@@ -43,13 +46,13 @@ Views.contratos = {
   },
 
   galeria(c) {
-    const { icon, esc } = UI; const s = this.st; const M = this.modelos();
+    const { icon, esc } = UI; const s = this.st; const M = this.modelos().filter(m => this.pertence(m.categoria));
     const L = M.filter(m => (!s.cat || m.categoria === s.cat) && (!s.q || (m.nome + m.origem).toLowerCase().includes(s.q.toLowerCase())));
     const cats = Object.keys(this.CATS).filter(k => M.some(m => m.categoria === k));
     c.innerHTML = `<div class="filterbar card"><div class="card-b"><div class="toolbar" style="margin:0"><div class="tfind-w" style="flex:1">${icon('search')}<input class="input" id="mq" placeholder="Buscar modelo…" value="${esc(s.q)}"></div>
         <button class="btn" id="madd">${icon('plus')} Novo modelo</button></div>
         <div class="row mt" style="gap:6px"><button class="chip ${!s.cat ? 'on' : ''}" data-c="">Todos <b>${M.length}</b></button>${cats.map(k => `<button class="chip ${s.cat === k ? 'on' : ''}" data-c="${k}">${k} <b>${M.filter(m => m.categoria === k).length}</b></button>`).join('')}</div></div></div>
-      ${cats.filter(k => L.some(m => m.categoria === k)).map(k => `<div class="rel-sec"><div class="rel-sec-h"><div class="rel-ico" style="--c:${this.CATS[k][1]}">${icon(this.CATS[k][0])}</div><div><h2>${k}s</h2><p class="muted tiny">${L.filter(m => m.categoria === k).length} modelos</p></div></div>
+      ${cats.filter(k => L.some(m => m.categoria === k)).map(k => `<div class="rel-sec"><div class="rel-sec-h"><div class="rel-ico" style="--c:${this.CATS[k][1]}">${icon(this.CATS[k][0])}</div><div><h2>${k === 'Declaração' ? 'Declarações' : k + 's'}</h2><p class="muted tiny">${L.filter(m => m.categoria === k).length} modelos</p></div></div>
         <div class="grid g3">${L.filter(m => m.categoria === k).sort((a, b) => (b.vtn ? 1 : 0) - (a.vtn ? 1 : 0)).map(m => `<div class="card mod-card" style="--c:${this.CATS[k][1]}"><div class="mod-thumb" data-pv="${m.id}"><div class="mod-paper">${this.miniatura(m)}</div></div><div class="card-b">
           <div class="row" style="gap:6px">${m.vtn ? '<span class="badge brand">Modelo VTN</span>' : '<span class="badge">Modelo do app</span>'}${m.editado ? '<span class="badge warn">editado</span>' : ''}</div>
           <h3 style="margin:8px 0 4px">${esc(m.nome)}</h3><p class="tiny muted" style="margin:0">${icon('file')} ${esc(m.origem || '')}</p>
@@ -59,7 +62,7 @@ Views.contratos = {
     UI.$$('[data-pv]', c).forEach(b => b.onclick = () => this.visualizar(b.dataset.pv));
     UI.$$('[data-use]', c).forEach(b => b.onclick = () => this.novo({ modelo: b.dataset.use }));
     UI.$$('[data-me]', c).forEach(b => b.onclick = () => this.editModelo(b.dataset.me));
-    UI.$('#madd', c).onclick = () => { const id = 'mod' + Date.now(); Store.db.modelosContrato.push({ id, nome: 'Novo modelo', categoria: 'Contrato', origem: 'Modelo criado no app', corpo: '<h1>CONTRATO</h1>\n<p>{{CLIENTES_QUALIFICACAO}}</p>\n{{ASSINATURAS}}' }); Store.save(); this.editModelo(id); };
+    UI.$('#madd', c).onclick = () => { const id = 'mod' + Date.now(); Store.db.modelosContrato.push({ id, nome: 'Novo modelo', categoria: this.so === 'Proposta' ? 'Proposta' : 'Contrato', origem: 'Modelo criado no app', corpo: '<h1>CONTRATO</h1>\n<p>{{CLIENTES_QUALIFICACAO}}</p>\n{{ASSINATURAS}}' }); Store.save(); this.editModelo(id); };
   },
   miniatura(m) {
     const t = m.corpo.replace(/\{\{[A-Z_]+\}\}/g, '▬▬▬').replace(/<h1>([\s\S]*?)<\/h1>/, '<b class="mt-h">$1</b>').replace(/<h2>([\s\S]*?)<\/h2>/g, '<i class="mt-s">$1</i>').replace(/<(?!\/?(b|i)\b)[^>]+>/g, ' ');
@@ -119,10 +122,10 @@ Views.contratos = {
     }
     const o = Store.get('obras', preset.obraId);
     const orc = Store.get('orcamentos', preset.orcamentoId);
-    const modelo = preset.modelo || (o && o.modalidade === 'Elaboração de projetos' ? 'vtn_contrato_projetos' : o && o.modalidade === 'Empreitada global' ? 'vtn_empreitada_global' : 'vtn_contrato_projetos');
+    const modelo = preset.modelo || (this.so === 'Proposta' ? ((M.find(m => m.id === 'vtn_proposta_2026') || M.find(m => m.categoria === 'Proposta') || {}).id) : null) || (o && o.modalidade === 'Elaboração de projetos' ? 'vtn_contrato_projetos' : o && o.modalidade === 'Empreitada global' ? 'vtn_empreitada_global' : 'vtn_contrato_projetos');
     const v = Object.assign({ modelo, data: UI.today(), status: 'Rascunho', valor: orc ? Calc.orcTotal(orc).total : o ? o.valorContrato : 0, clienteIds: o ? (o.clienteIds || []).slice() : orc ? clientesDe(orc).slice() : [], prazoMeses: 12, prazoDias: 40, titulo: o ? o.nome : orc ? orc.titulo : '', cidade: (o && o.cidade) || 'Itabirito', inicio: UI.today() },
       this.defaults(modelo, o, orc), preset);
-    const opts = () => Object.keys(this.CATS).flatMap(k => M.filter(m => m.categoria === k).map(m => [m.id, `${k} · ${m.nome}${m.vtn ? ' (VTN)' : ''}`]));
+    const opts = () => Object.keys(this.CATS).flatMap(k => M.filter(m => m.categoria === k && (this.pertence(k) || m.id === modelo)).map(m => [m.id, `${k} · ${m.nome}${m.vtn ? ' (VTN)' : ''}`]));
     // a obra dita o título e os clientes do documento
     setTimeout(() => {
       const md = [...document.querySelectorAll('.modal')].pop(); if (!md) return;
@@ -278,3 +281,5 @@ Views.contratos = {
   WORD_CSS: "body{font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.5;color:#111}.lh{border-bottom:3px solid #18c20e;padding-bottom:8px;margin-bottom:18px}.lh-logo{height:60px}.lh-side{text-align:right}.lh-emp b{font-size:13pt}.lh-emp span{display:block;color:#666;font-size:9pt}.lh-tag{float:right;font-weight:bold;color:#119a09}h1{text-align:center;font-size:14pt}h1 small{display:block;font-size:10pt;color:#555}h2{font-size:11pt;background:#f1f5f9;border-left:4px solid #18c20e;padding:4px 8px;text-transform:uppercase}p{text-align:justify}p.cl{font-weight:bold;margin-bottom:2px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #cbd5e1;padding:4px 6px}th{background:#f1f5f9}.n{text-align:right}.sig-l{margin-top:36px;text-align:center}.sig-l i{display:block;border-top:1px solid #333;width:70%;margin:0 auto 4px}.sig-l b{display:block}.sig-l span{font-size:9pt}.sig-grp{font-weight:bold;margin-top:24px}.lh-foot{border-top:1px solid #ccc;margin-top:30px;padding-top:6px;font-size:8.5pt;color:#666;text-align:center}.valor-box{border:2px solid #18c20e;padding:8px;text-align:center;margin:10px 0}.valor-box b{display:block;font-size:16pt}.local{text-align:right;margin-top:24px}"
 };
 Open.CT = id => Views.contratos.editor(id);
+// página só de propostas comerciais: mesma máquina de documentos, filtrada para a categoria Proposta
+Views.propostas = Object.assign(Object.create(Views.contratos), { chave: 'propostas', so: 'Proposta', st: { tab: 'lista', cat: '', q: '' } });

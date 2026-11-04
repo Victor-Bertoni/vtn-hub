@@ -21,7 +21,7 @@ Views.obraDetalhe = {
         <h1 style="margin-top:8px">${esc(o.nome)}</h1><p>${cli} · ${esc(o.endereco || '')} ${o.cidade ? '– ' + esc(o.cidade) + '/' + esc(o.uf || '') : ''}</p></div>
         <div class="row">
           ${Auth.can('relatorios') ? `<button class="btn" onclick="Views.relatorios.obra('${id}')">${icon('printer')} Relatório</button>` : ''}
-          ${Auth.can('contratos') ? `<button class="btn" onclick="Views.contratos.novo({obraId:'${id}'})">${icon('file-signature')} Contrato</button>` : ''}
+          ${Auth.can('contratos') ? `<button class="btn" onclick="Views.propostas.novo({obraId:'${id}'})">${icon('send')} Proposta</button><button class="btn" onclick="Views.contratos.novo({obraId:'${id}'})">${icon('file-signature')} Contrato</button>` : ''}
           ${Auth.can('orcamentos') ? `<button class="btn" onclick="Views.orcamentos.novo({obraId:'${id}'})">${icon('calculator')} Orçamento</button>` : ''}
           ${Auth.can('obras.editar') ? `<button class="btn primary" onclick="Views.obras.edit('${id}')">${icon('pencil')} Editar</button>` : ''}
         </div></div>
