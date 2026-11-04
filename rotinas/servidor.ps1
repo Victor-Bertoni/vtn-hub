@@ -170,21 +170,31 @@ function Atualizar-Programa {
   if ($Repo -like 'COLE_AQUI*') { return }
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $remoto = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/$Repo/$Ramo/versao.json" -TimeoutSec 20).Content | ConvertFrom-Json
+    # 1 consulta leve: qual é o último envio (commit) do GitHub. Sem cache, sempre o do momento.
+    $h = @{ 'User-Agent' = 'VTN-Hub-servidor'; Accept = 'application/vnd.github+json'; 'Cache-Control' = 'no-cache' }
+    $tok = Token-GitHub; if ($tok) { $h.Authorization = "Bearer $tok" }
+    $sha = [string](Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/branches/$Ramo" -Headers $h -TimeoutSec 20).commit.sha
+    if (-not $sha -or $sha -eq $script:ultimoSha) { return }   # nada novo desde a última conferência
+    # versão daquele envio exato (endereço fixo do commit: nunca vem cópia velha)
+    $remoto = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/$Repo/$sha/versao.json" -TimeoutSec 20).Content | ConvertFrom-Json
     $localArq = Join-Path $Programa 'versao.json'
     $local = if (Test-Path $localArq) { Get-Content -Raw $localArq | ConvertFrom-Json } else { $null }
     if (-not $local -or $remoto.versao -gt $local.versao) {
-      $zip = Join-Path $env:TEMP 'vtn_programa.zip'; $ext = Join-Path $env:TEMP 'vtn_programa'
-      Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$Repo/archive/refs/heads/$Ramo.zip" -OutFile $zip -TimeoutSec 120
+      $zip = Join-Path $env:TEMP "vtn_programa_$($sha.Substring(0,7)).zip"; $ext = Join-Path $env:TEMP "vtn_programa_$($sha.Substring(0,7))"
+      Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$Repo/archive/$sha.zip" -OutFile $zip -TimeoutSec 120
       Expand-Archive -Path $zip -DestinationPath $ext -Force
       $raiz = Get-ChildItem $ext -Directory | Select-Object -First 1
       New-Item -ItemType Directory -Force -Path $Programa | Out-Null
       Copy-Item -Recurse -Force (Join-Path $raiz.FullName '*') $Programa
+      $script:ultimoSha = $sha
       Escrever-Log "Programa atualizado do GitHub para a versão $($remoto.versao)"
       if ($script:l -and $script:l.IsListening) { Escrever-Log 'Reiniciando o servidor com a versão nova'; $script:l.Stop(); Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""; exit }
     }
-  } catch { }
+    $script:ultimoSha = $sha
+  } catch { if (-not $script:avisoAtual -or ((Get-Date) - $script:avisoAtual).TotalMinutes -ge 60) { $script:avisoAtual = Get-Date; Escrever-Log "Aviso: atualização automática falhou: $($_.Exception.Message)" } }
 }
+# com o acesso ao GitHub ligado confere a cada 15 s (quase instantâneo); sem ele, a cada 60 s (limite do GitHub para quem não se identifica)
+$IntervaloAtualizacao = if (Token-GitHub) { 15 } else { 60 }
 
 Atualizar-Programa
 Ler-Sessoes
@@ -202,7 +212,7 @@ Iniciar-Tunel
 while ($l.IsListening) {
   $tarefa = $l.GetContextAsync()
   while (-not $tarefa.AsyncWaitHandle.WaitOne(1000)) {
-    if (((Get-Date) - $ultimaConferencia).TotalSeconds -ge 60) { $ultimaConferencia = Get-Date; Atualizar-Programa }   # confere o GitHub a cada 1 min (atualização quase instantânea)
+    if (((Get-Date) - $ultimaConferencia).TotalSeconds -ge $IntervaloAtualizacao) { $ultimaConferencia = Get-Date; Atualizar-Programa }   # confere o GitHub a cada 15 s (atualização quase instantânea)
     # túnel: confere a cada 5 s; endereço novo é publicado na hora
     $agora = Get-Date
     if (($agora - $ultimaVigia).TotalSeconds -ge 5) { $ultimaVigia = $agora; if (Vigiar-Tunel) { $enderecoNovo = $true } }
