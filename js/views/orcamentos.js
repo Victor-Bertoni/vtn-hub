@@ -46,14 +46,15 @@ Views.orcamentos = {
       footer: `<button class="btn danger" data-del style="margin-right:auto">${icon('trash-2')}</button><button class="btn" data-pr>${icon('printer')} Imprimir / PDF</button><button class="btn" data-so title="Grava o PDF na pasta COMERCIAL da obra (OneDrive › 00_SERVIÇOS)">${icon('folder-input')} Salvar na pasta da obra</button><button class="btn" data-pp>${icon('send')} Proposta VTN</button><button class="btn" data-ct>${icon('file-signature')} Gerar contrato</button><button class="btn" data-ob>${icon('hard-hat')} Criar obra</button><button class="btn primary" data-sv>${icon('save')} Salvar</button>` });
     const body = m.$('#ob');
     const draw = () => {
+      if (o.ordemItens !== 'manual') o.itens = itensAZ(o.itens);
       const t = Calc.orcTotal(o);
       body.innerHTML = UI.fields([{ k: 'titulo', l: 'Título', full: 1 }, { k: 'clienteIds', l: 'Cliente(s) — clientes cadastrados na obra · Ctrl+clique para mais de um', t: 'multi', o: () => Views.contratos.clientesOpc(o.obraId, o.clienteIds) },
         { k: 'obraId', l: 'Obra', t: 'select', o: () => Store.all('obras').map(x => [x.id, x.id + ' · ' + x.nome]) }, { k: 'data', l: 'Data', t: 'date' }, { k: 'validade', l: 'Validade', t: 'date' },
-        { k: 'status', l: 'Status', t: 'select', o: LISTAS.statusOrc }], o) +
+        { k: 'status', l: 'Status', t: 'select', o: LISTAS.statusOrc }, { k: 'ordemItens', l: 'Ordem dos itens (tela, impressão, proposta e contrato)', t: 'select', o: [['az', 'Alfabética (A → Z)'], ['manual', 'Escolhida por mim (setas ↑ ↓)']], blank: false }], Object.assign({ ordemItens: 'az' }, o)) +
         `<h3 class="mt2 mb">Itens</h3><div class="table-wrap"><table class="t"><thead><tr><th>Descrição</th><th>Un.</th><th class="num">Qtd</th><th class="num">Unitário</th><th class="num">Total</th><th></th></tr></thead><tbody>
         ${o.itens.map((i, k) => `<tr><td><input class="input" data-i="${k}" data-f="desc" value="${esc(i.desc)}" style="width:100%"></td><td><input class="input" data-i="${k}" data-f="un" value="${esc(i.un)}" style="width:70px"></td>
           <td class="num"><input class="input" type="number" step="any" data-i="${k}" data-f="qtd" value="${i.qtd}" style="width:80px;text-align:right"></td><td class="num"><input class="input" type="number" step="any" data-i="${k}" data-f="unit" value="${i.unit}" style="width:110px;text-align:right"></td>
-          <td class="num"><b>${money(i.qtd * i.unit)}</b></td><td><button class="btn ghost sm" data-rm="${k}">${icon('x')}</button></td></tr>`).join('')}
+          <td class="num"><b>${money(i.qtd * i.unit)}</b></td><td style="white-space:nowrap">${o.ordemItens === 'manual' ? `<button class="btn ghost sm" data-up="${k}" title="Subir" ${k ? '' : 'disabled'}>${icon('arrow-up')}</button><button class="btn ghost sm" data-dn="${k}" title="Descer" ${k < o.itens.length - 1 ? '' : 'disabled'}>${icon('arrow-down')}</button>` : ''}<button class="btn ghost sm" data-rm="${k}">${icon('x')}</button></td></tr>`).join('')}
         </tbody></table></div>
         <div class="row mt"><select class="select" id="catsel" style="flex:1;min-width:240px"><option value="">+ Adicionar do catálogo de preços…</option>${[...new Set(cat.map(c => c.grupo))].sort(AZ).map(g => `<optgroup label="${esc(g)}">${cat.filter(c => c.grupo === g).map(c => `<option value="${c.id}">${esc(c.desc)} (${esc(c.un)}${c.unit ? ' · ' + money(c.unit) : ''})</option>`).join('')}</optgroup>`).join('')}</select><select class="select" id="compsel" style="flex:1;min-width:240px"><option value="">+ Adicionar composição (mão de obra + materiais)…</option>${(() => { const D = window.Comp ? Comp.dados() : { composicoes: [] }; return [...new Set(D.composicoes.map(c => c.grupo))].sort(AZ).map(g => `<optgroup label="${esc(g)}">${D.composicoes.filter(c => c.grupo === g).sort((a, b) => AZ(a.nome, b.nome)).map(c => `<option value="${c.id}">${esc(c.nome)} (${esc(c.un)} · ${money(Comp.custo(c, D.insumos).total)})</option>`).join('')}</optgroup>`).join(''); })()}</select>
           <button class="btn" id="addfree">${icon('plus')} Item livre</button><button class="btn" id="addet" title="Copiar etapas da obra vinculada">${icon('copy')} Importar etapas da obra</button></div>
@@ -65,12 +66,16 @@ Views.orcamentos = {
             <dt>Desconto (R$)</dt><dd class="right"><input class="input" type="number" step="any" data-g="desconto" value="${o.desconto}" style="width:120px;text-align:right"></dd>
             <dt style="font-size:16px;font-weight:700;color:var(--text)">TOTAL</dt><dd class="right" style="font-size:20px;font-weight:800;color:var(--brand)">${money(t.total)}</dd></dl></div></div></div>`;
       UI.icons();
-      const grab = () => { Object.assign(o, UI.read(body, [{ k: 'titulo' }, { k: 'clienteIds', t: 'multi' }, { k: 'obraId' }, { k: 'data' }, { k: 'validade' }, { k: 'status' }, { k: 'condicoes' }, { k: 'obs' }])); o.clienteId = o.clienteIds[0] || ''; };
+      const grab = () => { Object.assign(o, UI.read(body, [{ k: 'titulo' }, { k: 'clienteIds', t: 'multi' }, { k: 'obraId' }, { k: 'data' }, { k: 'validade' }, { k: 'status' }, { k: 'ordemItens' }, { k: 'condicoes' }, { k: 'obs' }])); o.clienteId = o.clienteIds[0] || ''; };
       // a obra dita o nome e os clientes do orçamento
       const selObra = UI.$('[name="obraId"]', body); if (selObra) selObra.onchange = () => { grab(); const ob = Store.get('obras', o.obraId); if (ob) { o.titulo = 'Orçamento – ' + ob.nome; o.clienteIds = (ob.clienteIds || []).slice(); o.clienteId = o.clienteIds[0] || ''; UI.toast('Nome e cliente(s) preenchidos pela obra'); } draw(); };
       UI.$$('[data-i]', body).forEach(i => i.onchange = () => { grab(); const it = o.itens[+i.dataset.i]; it[i.dataset.f] = ['qtd', 'unit'].includes(i.dataset.f) ? +i.value || 0 : i.value; draw(); });
       UI.$$('[data-g]', body).forEach(i => i.onchange = () => { grab(); o[i.dataset.g] = +i.value || 0; draw(); });
       UI.$$('[data-rm]', body).forEach(b => b.onclick = () => { grab(); o.itens.splice(+b.dataset.rm, 1); draw(); });
+      const mover = (k, d) => { grab(); const j = k + d; if (j < 0 || j >= o.itens.length) return; [o.itens[k], o.itens[j]] = [o.itens[j], o.itens[k]]; draw(); };
+      UI.$$('[data-up]', body).forEach(b => b.onclick = () => mover(+b.dataset.up, -1));
+      UI.$$('[data-dn]', body).forEach(b => b.onclick = () => mover(+b.dataset.dn, 1));
+      const selOrd = UI.$('[name="ordemItens"]', body); if (selOrd) selOrd.onchange = () => { grab(); draw(); };
       if (UI.$('#compsel', body)) UI.$('#compsel', body).onchange = e => { const D = Comp.dados(); const c = D.composicoes.find(x => x.id === e.target.value); if (!c) return; grab(); const r = Comp.custo(c, D.insumos); o.itens.push({ desc: c.nome + (c.itens.length ? ' (mão de obra + materiais)' : ''), un: c.un, qtd: 1, unit: +r.total.toFixed(2), compId: c.id }); draw(); };
       UI.$('#catsel', body).onchange = e => { const c = Store.get('catalogo', e.target.value); if (!c) return; grab(); o.itens.push({ desc: c.desc, un: c.un, qtd: 1, unit: c.unit || 0 }); draw(); };
       UI.$('#addfree', body).onclick = () => { grab(); o.itens.push({ desc: '', un: 'un', qtd: 1, unit: 0 }); draw(); };
@@ -110,7 +115,7 @@ Views.orcamentos = {
       ${ob.nome ? `<tr><th>OBRA</th><td colspan="5">${esc(ob.nome)}${ob.endereco ? ' – ' + esc(ob.endereco) : ''}${ob.cidade ? ', ' + esc(ob.cidade) + '/' + esc(ob.uf || 'MG') : ''}${ob.area ? ' · ' + UI.num(ob.area) + ' m²' : ''}</td></tr>` : ''}</table>
       <h2>Composição do orçamento</h2>
       <table class="dt"><thead><tr><th>#</th><th>Item</th><th class="n">Qtde</th><th>Unid.</th><th class="n">Custo unitário</th><th class="n">Custo total</th></tr></thead><tbody>
-      ${itensAZ(o.itens).map((i, k) => `<tr><td>${String(k + 1).padStart(2, '0')}</td><td>${esc(i.desc)}</td><td class="n">${UI.num(i.qtd)}</td><td>${esc(i.un)}</td><td class="n">${money(i.unit)}</td><td class="n">${money(i.qtd * i.unit)}</td></tr>`).join('')}
+      ${itensOrdem(o.itens, o.ordemItens).map((i, k) => `<tr><td>${String(k + 1).padStart(2, '0')}</td><td>${esc(i.desc)}</td><td class="n">${UI.num(i.qtd)}</td><td>${esc(i.un)}</td><td class="n">${money(i.unit)}</td><td class="n">${money(i.qtd * i.unit)}</td></tr>`).join('')}
       </tbody><tfoot><tr><td colspan="5" class="n">TOTAL ORÇAMENTO</td><td class="n">${money(t.sub)}</td></tr>
       ${t.bdi ? `<tr><td colspan="5" class="n">BDI (${UI.num(o.bdi)}%)</td><td class="n">${money(t.bdi)}</td></tr>` : ''}
       ${t.imp ? `<tr><td colspan="5" class="n">${+o.imposto > 7 ? 'IMPOSTO + TAXA' : 'IMPOSTO NOTA'} (${UI.num(o.imposto)}%)</td><td class="n">${money(t.imp)}</td></tr>` : ''}
