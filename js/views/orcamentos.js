@@ -47,7 +47,7 @@ Views.orcamentos = {
     const body = m.$('#ob');
     const draw = () => {
       const t = Calc.orcTotal(o);
-      body.innerHTML = UI.fields([{ k: 'titulo', l: 'Título', full: 1 }, { k: 'clienteIds', l: 'Cliente(s) — vêm da obra · Ctrl+clique para mais de um', t: 'multi', o: () => Store.all('pessoas').slice().sort((a, b) => AZ(a.nome, b.nome)).map(p => [p.id, p.nome]) },
+      body.innerHTML = UI.fields([{ k: 'titulo', l: 'Título', full: 1 }, { k: 'clienteIds', l: 'Cliente(s) — vêm da obra · Ctrl+clique para mais de um', t: 'multi', o: () => Views.contratos.clientesOpc(o.obraId, o.clienteIds) },
         { k: 'obraId', l: 'Obra', t: 'select', o: () => Store.all('obras').map(x => [x.id, x.id + ' · ' + x.nome]) }, { k: 'data', l: 'Data', t: 'date' }, { k: 'validade', l: 'Validade', t: 'date' },
         { k: 'status', l: 'Status', t: 'select', o: LISTAS.statusOrc }], o) +
         `<h3 class="mt2 mb">Itens</h3><div class="table-wrap"><table class="t"><thead><tr><th>Descrição</th><th>Un.</th><th class="num">Qtd</th><th class="num">Unitário</th><th class="num">Total</th><th></th></tr></thead><tbody>
