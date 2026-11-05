@@ -7,7 +7,7 @@
    ========================================================= */
 window.CONFIG = {
   appName: 'VTN Hub',
-  APP_VERSION: '2026.11.04-2200',   // muda a cada atualização publicada
+  APP_VERSION: '2026.11.04-2230',   // muda a cada atualização publicada
   appTagline: 'Gestão de obras e engenharia',
   AUTH: {
     enabled: true,            // login obrigatório (desligue com false)

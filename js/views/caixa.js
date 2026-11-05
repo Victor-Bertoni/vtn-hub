@@ -81,7 +81,8 @@ window.PCI = (() => {
   function editar(obraId) {
     const o = Store.get('obras', obraId); if (!o) return;
     const p = dados(o); const { esc, money, pct, icon } = UI; const ed = Auth.can('obras.editar');
-    const sel = (k, lista, v) => `<select class="select" name="${k}"><option value=""></option>${lista.map(x => `<option ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
+    // valor vindo da planilha da CAIXA que não está na lista continua aparecendo (e é mantido ao salvar)
+    const sel = (k, lista, v) => `<select class="select" name="${k}"><option value=""></option>${(v && !lista.includes(v) ? [v].concat(lista) : lista).map(x => `<option ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
     const inp = (k, v, t = 'text', extra = '') => `<input class="input" name="${k}" type="${t}" ${t === 'number' ? 'step="any"' : ''} value="${esc(v ?? '')}" ${extra}>`;
     const campo = (l, html, cls = '') => `<div class="field ${cls}"><label>${l}</label>${html}</div>`;
     const cli = (o.clienteIds || []).map(pessoa); const rt = rtObra(o);

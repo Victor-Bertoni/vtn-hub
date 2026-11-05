@@ -302,6 +302,25 @@ while ($l.IsListening) {
       catch { Json $ctx @{ ok = $false; erro = $_.Exception.Message } 500 }
       continue
     }
+    if ($rota -eq '/api/inventario' -and $req.HttpMethod -eq 'POST') {   # lista (só leitura) dos arquivos do drive para o app comparar com o banco (só administradores)
+      if ($sessao.papel -ne 'admin') { Json $ctx @{ erro = 'sem permissao' } 403; continue }
+      try {
+        $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json
+        $base = Join-Path $OneDrive '00_VTN'; $corte = $base.Length + 1; $epoca = [datetime]'1970-01-01'
+        $sb = New-Object Text.StringBuilder; [void]$sb.Append('{"ok":true,"itens":['); $n = 0
+        foreach ($r in @($c.raizes)) {
+          $dir = Join-Path $base ([string]$r); if (-not (Test-Path -LiteralPath $dir)) { continue }
+          foreach ($f in (Get-ChildItem -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue)) {
+            $rel = $f.FullName.Substring($corte).Replace('\', '/').Replace('"', '\"'); $rel = [regex]::Replace($rel, '[\x00-\x1f]', ' ')
+            if ($n -gt 0) { [void]$sb.Append(',') }; $n++
+            if ($f.PSIsContainer) { [void]$sb.Append('["' + $rel + '",-1,0]') }
+            else { [void]$sb.Append('["' + $rel + '",' + $f.Length + ',' + [long](($f.LastWriteTimeUtc - $epoca).TotalMilliseconds) + ']') }
+          }
+        }
+        [void]$sb.Append('],"total":' + $n + '}'); Texto $ctx $sb.ToString()
+      } catch { Json $ctx @{ ok = $false; erro = $_.Exception.Message } 500 }
+      continue
+    }
     if ($rota -eq '/api/criar-pasta-obra' -and $req.HttpMethod -eq 'POST') {   # obra nova: cria a pasta no drive (só administradores)
       if ($sessao.papel -ne 'admin') { Json $ctx @{ erro = 'sem permissao' } 403; continue }
       $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json

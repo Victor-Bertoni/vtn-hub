@@ -393,3 +393,108 @@ Views.funil = {
     UI.$('#fuPer', el).onchange = e => { s.periodo = e.target.value; App.refresh(); };
   }
 };
+
+/* =========================================================
+   SINCRONIZAR COM O DRIVE (OneDrive\00_VTN)
+   O servidor do PC lista o drive (só leitura); o app acrescenta ao banco o que faltar:
+   obras novas (pastas "NN - NOME" em 00_SERVIÇOS), clientes, e TODOS os arquivos (índice).
+   Nada é apagado: arquivo que sumiu do drive só ganha a marca "não encontrado no drive".
+   Roda sozinho para administrador (no máximo a cada 6 h) e pelo botão em Configurações / Obras.
+   ========================================================= */
+window.SincDrive = (() => {
+  const RAIZES = ['00_SERVIÇOS', '01_CONTABILIDADE', '02_PROSPECÇÃO', '03_MODELOS PLANTAS', '04_PLANEJAMENTO', '06_ESTUDOS', '07_DOCUMENTOS GERAIS', '09 - PREFEITURAS', '10 - LICITAÇÕES', '11 - COTAÇÕES'];
+  // nunca entram no banco (o banco vai cifrado para o GitHub, mas senha e certificado não saem do PC)
+  const SENSIVEL = /senha|password|login|\.pfx$|\.p12$|\.cer$|\.key$|certificado digital|cód_ass|cod_ass/i;
+  const LIXO = /(^|\/)(~\$|\.~lock|thumbs\.db$|desktop\.ini$|\.ds_store$)|\.(tmp|bak|dwl2?|lck|crdownload|partial)$/i;
+  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+  const titulo = s => s.toLowerCase().split(/\s+/).map(w => ['e', 'de', 'da', 'do', 'das', 'dos', 'a'].includes(w) ? w : /^(bh|ap|vtn|copasa|e\.)$/.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  const CIDADES = [['ITABIRITO', 'Itabirito'], ['IBIRITE', 'Ibirité'], ['CONTAGEM', 'Contagem'], ['LAGOA SANTA', 'Lagoa Santa'], ['NOVA LIMA', 'Nova Lima'], ['VESPASIANO', 'Vespasiano'], ['CONGONHAS', 'Congonhas'], ['BRUMADINHO', 'Brumadinho'], ['SANTA LUZIA', 'Santa Luzia'], ['PARQUE EUROPA', 'Contagem'], [' BH', 'Belo Horizonte']];
+  const tipoDoc = n => { const u = norm(n); return /CONTRATO/.test(u) ? 'Contrato' : /PROPOSTA/.test(u) ? 'Proposta' : /ORCAMENTO/.test(u) ? 'Orçamento' : /\bART\b|\bRRT\b/.test(u) ? 'ART/RRT' : /NFS ?E|\bNF\b|NOTA FISCAL/.test(u) ? 'Nota fiscal' : /\bPLS\b|\bPCI\b/.test(u) ? 'CAIXA' : /\.(JPE?G|PNG|HEIC|WEBP)$/i.test(n) ? 'Foto' : /\.(DWG|DXF|RVT|IFC|SKP)$/i.test(n) ? 'Projeto' : ''; };
+  const pad = n => String(n).padStart(4, '0');
+  let rodando = false;
+
+  async function rodar({ silencioso = false } = {}) {
+    if (rodando) return; const eu = (Auth.current && Auth.current()) || {};
+    if (eu.papel !== 'admin' || !(window.VTN_PASTA && VTN_PASTA.servidor)) { if (!silencioso) UI.toast('A sincronização com o drive roda com o computador servidor ligado e um administrador logado.', 'err'); return; }
+    rodando = true; if (!silencioso) UI.toast('Lendo o drive todo… pode levar alguns segundos.');
+    let inv; try { inv = await VTN_PASTA.enviar('inventario', { raizes: RAIZES }); } catch (e) { rodando = false; if (!silencioso) UI.toast('Não foi possível ler o drive: ' + e.message + ' (o servidor do PC precisa estar atualizado).', 'err'); return; }
+    const db = Store.db, agora = new Date().toISOString(), hoje = UI.today();
+    const r = { obras: [], clientes: 0, novos: 0, atualizados: 0, ausentes: 0, status: [], ignorados: 0, total: 0 };
+    // obras existentes: pela pasta gravada, senão pelo número (só se for único)
+    const porPasta = {}, porNum = {};
+    db.obras.forEach(o => { if (o.pasta) porPasta[norm(String(o.pasta).split('/').pop())] = o; const n = Drive.numeroDa(o); if (n) (porNum[n] = porNum[n] || []).push(o); });
+    const palavras = t => norm(t).split(' ').filter(w => w.length > 3 && !/^(OBRA|PROJETO|PROJETOS|LOTE|CASA|COND|PARQUE|EUROPA|ITABIRITO|CONTAGEM|FINAL|REFORMA|LAUDO|VISTORIA|RESIDENCIA)$/.test(w));
+    const obraDaPasta = top => { const p = porPasta[norm(top)]; if (p) return p; const m = /^\s*0*(\d+)\s*-/.exec(top); if (!m) return null;
+      const l = (porNum[+m[1]] || []).filter(o => !o.pasta || /00_SERVI[ÇC]OS$/.test(o.pasta) || norm(String(o.pasta).split('/').pop()) === norm(top)); const pt = palavras(top);
+      if (l.length === 1) return l[0];
+      const comNome = l.find(o => palavras(o.nome).some(w => pt.includes(w))); if (comNome) return comNome;
+      // obra antiga sem número/pasta próprios: casa pelo nome (2 palavras em comum), e só se ainda não tiver pasta própria
+      return db.obras.find(o => (!o.pasta || /00_SERVI[ÇC]OS$/.test(o.pasta)) && palavras(o.nome).filter(w => pt.includes(w)).length >= 2) || null; };
+    // índice dos arquivos já no banco
+    const chave = (oid, pasta, nome) => (oid || '') + '|' + norm(pasta) + '|' + String(nome || '').toLowerCase();
+    const idx = new Map(); db.arquivos.forEach(a => { idx.set(chave(a.obraId, a.pasta, a.nome), a); if (a.caminho) idx.set('@' + a.caminho.toLowerCase(), a); });
+    const vistos = new Set(); const tops = new Set(); const obraDoTop = {};
+    const itens = inv.itens || [];
+    // 1) pastas de obra em 00_SERVIÇOS
+    itens.forEach(([rel]) => { const p = rel.split('/'); if (p[0] === '00_SERVIÇOS' && p[1]) tops.add(p[1]); });
+    [...tops].sort().forEach(top => {
+      let o = obraDaPasta(top); const m = /^\s*0*(\d+)\s*-\s*(.+)$/.exec(top);
+      if (!o && m && +m[1] > 0) {   // pastas 00… são modelos/gerais, não viram obra
+        const num = +m[1], resto = m[2].replace(/_/g, ' ').trim();
+        let id = 'OB-' + pad(num); if (db.obras.some(x => x.id === id)) { let k = 0; while (db.obras.some(x => x.id === id + 'ABCDEFGHIJ'[k])) k++; id = id + 'ABCDEFGHIJ'[k]; }
+        const cidade = (CIDADES.find(([k]) => norm(' ' + resto).includes(k)) || [])[1] || '';
+        const nomeCli = titulo(resto.replace(/\b(ITABIRITO|IBIRITÉ|CONTAGEM|LAGOA SANTA|NOVA LIMA|VESPASIANO|CONGONHAS|BRUMADINHO|COND\.? PARQUE EUROPA|OBRA|PROJETOS?|LOTE|REFORMA|LAUDO|VISTORIA)\b/gi, '').replace(/[-–]+/g, ' ').replace(/\s+/g, ' ').trim());
+        let cli = nomeCli ? db.pessoas.find(p => norm(p.nome) === norm(nomeCli)) : null;
+        if (!cli && nomeCli) { cli = { id: Store.nextId('pessoas'), nome: nomeCli, tipo: 'Cliente', email: '', telefone: '', cpf: '', obs: `Criado pela sincronização com o drive a partir da pasta "${top}". Completar dados.`, criadoEm: agora }; db.pessoas.push(cli); r.clientes++; }
+        o = { id, numero: String(num), nome: titulo(resto), tipo: 'Serviço', modalidade: 'Prestação de serviço de engenharia', status: 'Prospecção', fase: '00_COMERCIAL', clienteIds: cli ? [cli.id] : [], rtId: '', gestorId: '', endereco: '', cidade, uf: 'MG', cep: '', area: 0, valorContrato: 0, valorImovel: 0, valorFinanciado: 0, custoPrevisto: 0,
+          dataInicio: '', descricao: `Criada pela sincronização com o drive em ${UI.date(hoje)} (pasta 00_SERVIÇOS/${top}).`, equipe: [], pasta: '00_VTN/00_SERVIÇOS/' + top, criadoEm: agora };
+        const rt = db.obras.find(x => x.rtId); if (rt) { o.rtId = rt.rtId; o.gestorId = rt.gestorId || rt.rtId; }
+        db.obras.push(o); porPasta[norm(top)] = o; r.obras.push(o.id + ' ' + o.nome);
+      }
+      obraDoTop[top] = o || null;
+      if (o && (!o.pasta || /00_SERVI[ÇC]OS$/.test(o.pasta))) { o.pasta = '00_VTN/00_SERVIÇOS/' + top; porPasta[norm(top)] = o; }
+    });
+    // 2) todos os arquivos
+    const docsPorObra = {};
+    itens.forEach(([rel, tam, ms]) => {
+      if (tam < 0) return; r.total++;
+      if (LIXO.test(rel) || SENSIVEL.test(rel)) { r.ignorados++; return; }
+      const p = rel.split('/'); const nome = p.pop(); let obraId = null, pasta;
+      if (p[0] === '00_SERVIÇOS' && obraDoTop[p[1]]) { obraId = obraDoTop[p[1]].id; pasta = p.slice(2).join('/') || '(raiz)'; }
+      else pasta = p.join('/');
+      const data = ms ? new Date(ms).toISOString().slice(0, 10) : '';
+      const a = idx.get('@' + rel.toLowerCase()) || idx.get(chave(obraId, pasta, nome));
+      if (a) { vistos.add(a.id); const pat = {}; if (!a.caminho) pat.caminho = rel; if (tam && a.tamanho !== tam) pat.tamanho = tam; if (data && !a.temBlob && a.data !== data) pat.data = data; if (a.ausenteNoDrive) pat.ausenteNoDrive = false;
+        if (Object.keys(pat).length) { Object.assign(a, pat); if (pat.tamanho || pat.data) r.atualizados++; } }
+      else { const n = { id: Store.nextId('arquivos'), obraId, pasta, nome, tamanho: tam, data, temBlob: false, origem: 'Drive (OneDrive 00_VTN)', caminho: rel, tipoDoc: tipoDoc(nome), criadoEm: agora };
+        db.arquivos.push(n); idx.set('@' + rel.toLowerCase(), n); vistos.add(n.id); r.novos++; }
+      if (obraId) (docsPorObra[obraId] = docsPorObra[obraId] || []).push(norm(nome));
+    });
+    // 3) arquivos do índice que não estão mais no drive (só marca, nunca apaga)
+    db.arquivos.forEach(a => { if (!vistos.has(a.id) && !a.temBlob && a.caminho && !a.ausenteNoDrive) { a.ausenteNoDrive = true; r.ausentes++; } });
+    // 4) status: só avança (nunca volta) quando os documentos mostram
+    Object.entries(docsPorObra).forEach(([oid, ns]) => { const o = db.obras.find(x => x.id === oid); if (!o) return; const tem = re => ns.some(n => re.test(n));
+      let novo = null;
+      if (o.status === 'Prospecção' && tem(/PROPOSTA|ORCAMENTO/)) novo = 'Orçamento';
+      if (['Prospecção', 'Orçamento'].includes(o.status) && tem(/CONTRATO.*ASSINAD|ASSINAD.*CONTRATO/)) novo = 'Contratada';
+      if (novo) { r.status.push(`${o.id} ${o.nome}: ${o.status} → ${novo}`); o.status = novo; o.atualizadoEm = agora; } });
+    db.sincDrive = { em: agora, por: eu.nome || eu.email || '', total: r.total, novos: r.novos, obras: r.obras.length };
+    Store.save(); rodando = false;
+    const resumo = `Drive sincronizado: ${r.total} arquivos lidos · ${r.novos} novos no banco · ${r.atualizados} atualizados · ${r.obras.length} obra(s) nova(s) · ${r.clientes} cliente(s) novo(s)${r.status.length ? ' · ' + r.status.length + ' status avançado(s)' : ''}${r.ausentes ? ' · ' + r.ausentes + ' não encontrados no drive (mantidos)' : ''}.`;
+    if (silencioso) { if (r.novos || r.obras.length) UI.toast(resumo); }
+    else UI.modal({ title: 'Sincronização com o drive', body: `<div class="alert ok mb">${UI.icon('check-circle-2')}<div>${UI.esc(resumo)}</div></div>
+      ${r.obras.length ? `<h3 class="mb">Obras criadas a partir das pastas</h3><ul>${r.obras.map(x => `<li>${UI.esc(x)}</li>`).join('')}</ul><p class="tiny muted">Complete status, valores e clientes de cada uma.</p>` : ''}
+      ${r.status.length ? `<h3 class="mb mt">Status avançados pelos documentos</h3><ul>${r.status.map(x => `<li>${UI.esc(x)}</li>`).join('')}</ul>` : ''}
+      <p class="tiny muted mt">${r.ignorados} arquivo(s) ignorado(s): temporários do Office/AutoCAD e arquivos de senha/certificado (esses nunca saem do computador). Nada foi apagado do banco nem do drive.</p>`, footer: '<button class="btn primary" data-close>OK</button>' });
+    App.refresh();
+    return r;
+  }
+  // automático: administrador logado no servidor, no máximo a cada 6 h (para os dois administradores não rodarem juntos)
+  setInterval(() => { try {
+    if (rodando || !window.Store || !Store.db || !(Store.db.obras || []).length || !window.VTN_PASTA || !VTN_PASTA.servidor) return;
+    const eu = (Auth.current && Auth.current()) || {}; if (eu.papel !== 'admin') return;
+    const u = (Store.db.sincDrive || {}).em; if (u && Date.now() - new Date(u).getTime() < 6 * 3600e3) return;
+    rodar({ silencioso: true });
+  } catch (e) {} }, 60000);
+  return { rodar, RAIZES };
+})();

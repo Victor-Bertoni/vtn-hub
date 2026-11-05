@@ -4,7 +4,8 @@ Views.config = {
   render(el) {
     const { icon, esc } = UI; const e = Store.db.empresa;
     const us = Store.all('usuarios');
-    el.innerHTML = `<div class="page-head"><div><h1>Configurações</h1><p>Empresa, usuários e privilégios, backup dos dados</p></div></div>
+    el.innerHTML = `<div class="page-head"><div><h1>Configurações</h1><p>Empresa, usuários e privilégios, backup dos dados</p></div>${(Auth.current() || {}).papel === 'admin' ? `<button class="btn" onclick="SincDrive.rodar()">${icon('refresh-cw')} Sincronizar com o drive</button>` : ''}</div>
+      ${Store.db.sincDrive ? `<div class="tiny muted mb">Última sincronização com o drive: ${UI.dateTime ? UI.dateTime(Store.db.sincDrive.em) : Store.db.sincDrive.em} · ${Store.db.sincDrive.total} arquivos lidos${Store.db.sincDrive.por ? ' · ' + UI.esc(Store.db.sincDrive.por) : ''}</div>` : ''}
       <div class="grid g2">
         <div class="card"><div class="card-h"><h3>Dados da empresa</h3><button class="btn sm primary" id="se">${icon('save')} Salvar</button></div><div class="card-b" id="ef">${UI.fields(this.fe(), e)}</div></div>
         <div class="stack">

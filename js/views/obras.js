@@ -41,7 +41,7 @@ Views.obras = {
     };
     el.innerHTML = `
       <div class="page-head"><div><h1>Obras e serviços</h1><p>${todas.length} registros · ${L.length} no filtro atual · código próprio OB-xxxx = número da pasta</p></div>
-        <div class="row"><button class="btn" id="ogr">${icon(s.graficos ? 'eye-off' : 'bar-chart-3')} ${s.graficos ? 'Ocultar gráficos' : 'Mostrar gráficos'}</button>${Auth.can('obras.editar') ? `<button class="btn primary" onclick="Views.obras.edit()">${icon('plus')} Nova obra/serviço</button>` : ''}</div></div>
+        <div class="row"><button class="btn" id="ogr">${icon(s.graficos ? 'eye-off' : 'bar-chart-3')} ${s.graficos ? 'Ocultar gráficos' : 'Mostrar gráficos'}</button>${(Auth.current() || {}).papel === 'admin' ? `<button class="btn" onclick="SincDrive.rodar()" title="Lê o OneDrive 00_VTN e acrescenta ao banco as pastas e arquivos que faltam (não apaga nada)">${icon('refresh-cw')} Sincronizar com o drive</button>` : ''}${Auth.can('obras.editar') ? `<button class="btn primary" onclick="Views.obras.edit()">${icon('plus')} Nova obra/serviço</button>` : ''}</div></div>
       <div class="grid g4 mb">
         ${Views.dashboard.kpi('', 'hard-hat', 'No filtro', T.n, `${ativas.length} ativas · físico médio ${pct(fisMed, 0)}`)}
         ${Views.dashboard.kpi('info', 'briefcase', 'Valor contratado', moneyK(T.contrato), `ticket médio ${moneyK(T.contrato / Math.max(1, L.filter(x => +x.o.valorContrato).length))}`)}
