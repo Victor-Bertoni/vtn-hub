@@ -191,8 +191,8 @@ Views.obraDetalhe = {
         <div class="card"><div class="card-h"><h3>Evolução das medições</h3></div><div class="card-b"><div class="chart-box"><canvas id="chMed"></canvas></div></div></div>
       </div>
 
-      <div class="card mt"><div class="card-h"><div><h3>PCI CAIXA — incidência por serviço</h3><div class="tiny muted">Limites mín./máx. da tabela CAIXA · base ${money(base)} (${o.valorFinanciado ? 'valor financiado' : 'valor do contrato'})</div></div>
-        <div class="row"><span class="badge ${Math.abs(somaInc - 100) < .05 ? 'ok' : 'err'}">Soma ${pct(somaInc, 2)}</span>${ed ? `<button class="btn sm primary" id="savInc">${icon('save')} Salvar incidências</button>` : ''}</div></div>
+      <div class="card mt"><div class="card-h"><div><h3>PCI CAIXA — incidência por serviço</h3>${o.pci ? `<div class="tiny"><b>PCI completo preenchido</b> – as PLS usam as incidências dele.</div>` : ''}<div class="tiny muted">Limites mín./máx. da tabela CAIXA · base ${money(base)} (${o.valorFinanciado ? 'valor financiado' : 'valor do contrato'})</div></div>
+        <div class="row"><button class="btn sm" onclick="PCI.editar('${o.id}')">${icon('file-spreadsheet')} Abrir PCI completo (formato CAIXA)</button><span class="badge ${Math.abs(somaInc - 100) < .05 ? 'ok' : 'err'}">Soma ${pct(somaInc, 2)}</span>${ed ? `<button class="btn sm primary" id="savInc">${icon('save')} Salvar incidências</button>` : ''}</div></div>
         <div class="card-b p0"><div class="table-wrap"><table class="t"><thead><tr><th>#</th><th>Serviço</th><th class="num">% mín</th><th class="num">% máx</th><th class="num">Incidência %</th><th class="num">Valor (R$)</th><th>Limite</th></tr></thead><tbody>
           ${CAIXA_SERVICOS.map((s, i) => { const v = +inc[i] || 0; const ok = v >= s[1] - 1e-9 && v <= s[2] + 1e-9; return `<tr><td>${i + 1}</td><td>${esc(s[0])}</td><td class="num">${pct(s[1], 2)}</td><td class="num">${pct(s[2], 2)}</td>
             <td class="num">${ed ? `<input class="input" style="width:90px;text-align:right" type="number" step="0.01" data-inc="${i}" value="${v}">` : pct(v, 2)}</td><td class="num">${money(v / 100 * base)}</td>
@@ -213,6 +213,8 @@ Views.obraDetalhe = {
     UI.$$('[data-inc]', c).forEach(i => i.oninput = () => { const s = UI.$$('[data-inc]', c).reduce((a, x) => a + (+x.value || 0), 0); UI.$('.card-h .badge', i.closest('.card')).textContent = 'Soma ' + UI.pct(s, 2); });
   },
   async editMedicao(id, obraId) {
+    // obra com PCI: a medição é a PLS no formato CAIXA (execução por serviço)
+    { const ob = Store.get('obras', obraId || (Store.get('medicoes', id) || {}).obraId); if (window.PCI && ob && ob.pci) return PCI.editarPLS(id, ob.id); }
     const x = id ? Store.get('medicoes', id) : { obraId, data: UI.today(), status: 'Prévia', situacao: 'Normal', numero: 'PLS ' + String(Store.where('medicoes', m => m.obraId === obraId).length).padStart(2, '0') };
     const list = [{ k: 'numero', l: 'Número (ex.: PLS 10, BM 03)', req: 1 }, { k: 'data', l: 'Data do levantamento', t: 'date', req: 1 },
       { k: 'acumulado', l: '% acumulado medido', t: 'number', req: 1 }, { k: 'aferido', l: '% aferido (vistoria CAIXA)', t: 'number' },
@@ -304,7 +306,7 @@ Views.obraDetalhe = {
     const { esc, icon, date } = UI;
     const ds = Store.where('diario', d => d.obraId === o.id).sort((a, b) => b.data.localeCompare(a.data));
     c.innerHTML = `<div class="toolbar">${Auth.can('obras.editar') ? `<button class="btn primary" onclick="Views.obraDetalhe.editDiario(null,'${o.id}')">${icon('plus')} Novo registro</button>` : ''}</div>
-      <div class="card"><div class="card-b">${ds.length ? `<div class="timeline">${ds.map(d => `<div class="tl"><div class="d">${date(d.data)} · ${esc(d.clima || '')} · efetivo ${d.efetivo || 0} · ${Store.get('pessoas', d.autorId) ? esc(Store.get('pessoas', d.autorId).nome) : ''} <span class="idlink" data-goto="${d.id}">${d.id}</span></div><div>${esc(d.texto)}</div></div>`).join('')}</div>` : UI.empty('Diário vazio.', 'notebook-pen')}</div></div>`;
+      <div class="card"><div class="card-b">${ds.length ? `<div class="timeline">${ds.map(d => `<div class="tl"><div class="d">${date(d.data)} · ${esc(d.clima || '')} · efetivo ${d.efetivo || 0} · ${Store.get('pessoas', d.autorId) ? esc(Store.get('pessoas', d.autorId).nome) : ''} <span class="idlink" data-goto="${d.id}">${d.id}</span>${(d.fotoIds || []).length ? ` · ${icon('camera')} ${d.fotoIds.length} foto(s)` : ''}</div><div>${esc(d.texto)}</div>${d.ocorrencias ? `<div class="tiny" style="color:var(--err)">Ocorrência: ${esc(d.ocorrencias)}</div>` : ''}</div>`).join('')}</div>` : UI.empty('Diário vazio.', 'notebook-pen')}</div></div>`;
   },
   async editDiario(id, obraId) {
     const x = id ? Store.get('diario', id) : { obraId, data: UI.today(), autorId: Auth.current().pessoaId };

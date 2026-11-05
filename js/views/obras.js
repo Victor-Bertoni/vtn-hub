@@ -119,7 +119,7 @@ Views.obras = {
       { k: 'dataContrato', l: 'Data do contrato', t: 'date' }, { k: 'dataInicio', l: 'Início da obra', t: 'date' },
       { k: 'dataPrevTermino', l: 'Término previsto', t: 'date' }, { k: 'dataTermino', l: 'Término real', t: 'date' },
       { k: 'matricula', l: 'Matrícula do imóvel' }, { k: 'cno', l: 'CNO' },
-      { k: 'art', l: 'ART / RRT' }, { k: 'alvaraVigencia', l: 'Vigência do alvará', t: 'date' },
+      { k: 'vendedorId', l: 'Vendedor (comissão)', t: 'select', o: () => Store.all('pessoas').filter(p => p.tipo !== 'Cliente').map(p => [p.id, p.nome]) }, { k: 'art', l: 'ART / RRT' }, { k: 'artBaixada', l: 'ART com baixa feita', t: 'check' }, { k: 'alvaraVigencia', l: 'Vigência do alvará', t: 'date' },
       { k: 'descricao', l: 'Descrição / escopo', t: 'textarea', full: 1 }
     ];
   },

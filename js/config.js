@@ -7,7 +7,7 @@
    ========================================================= */
 window.CONFIG = {
   appName: 'VTN Hub',
-  APP_VERSION: '2026.11.04-2040',   // muda a cada atualização publicada
+  APP_VERSION: '2026.11.04-2200',   // muda a cada atualização publicada
   appTagline: 'Gestão de obras e engenharia',
   AUTH: {
     enabled: true,            // login obrigatório (desligue com false)
@@ -64,7 +64,7 @@ window.LISTAS = {
   ],
   tipoPessoa: ['Cliente','Funcionário','Responsável técnico','Arquiteto(a)','Fornecedor','Prestador/Empreiteiro','Sócio','Outro'],
   catReceita: ['Recebimento etapa com NF','Recebimento etapa sem NF','Serviço de engenharia','Projetos','Aditivo','Outras receitas'],
-  catDespesa: ['Material','Mão de obra','Empreiteiro','Equipamentos/Locação','Projetos/Terceiros','Taxas (ART/Alvará/CNO)','Impostos','Deslocamento','Administrativo','Marketing / anúncios','Outras despesas'],
+  catDespesa: ['Material','Mão de obra','Empreiteiro','Equipamentos/Locação','Projetos/Terceiros','Taxas (ART/Alvará/CNO)','Impostos','Deslocamento','Administrativo','Marketing / anúncios','Pró-labore','Comissões','Distribuição de lucros','Outras despesas'],
   formaPgto: ['PIX','Transferência','Boleto','Dinheiro','Cartão de crédito','Cheque','Financiamento CAIXA'],
   prioridade: ['Baixa','Média','Alta','Crítica'],
   statusPend: ['Aberta','Em andamento','Resolvida'],

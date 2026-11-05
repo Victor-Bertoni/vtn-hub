@@ -43,7 +43,7 @@ Views.orcamentos = {
     const AZ = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base', numeric: true });
     const cat = Store.all('catalogo').slice().sort((a, b) => AZ(a.desc, b.desc));
     const m = UI.modal({ title: `Orçamento ${id}`, wide: true, body: `<div id="ob"></div>`,
-      footer: `<button class="btn danger" data-del style="margin-right:auto">${icon('trash-2')}</button><button class="btn" data-pr>${icon('printer')} Imprimir / PDF</button><button class="btn" data-so title="Grava o PDF na pasta COMERCIAL da obra (OneDrive › 00_SERVIÇOS)">${icon('folder-input')} Salvar na pasta da obra</button><button class="btn" data-pp>${icon('send')} Proposta VTN</button><button class="btn" data-ct>${icon('file-signature')} Gerar contrato</button><button class="btn" data-ob>${icon('hard-hat')} Criar obra</button><button class="btn primary" data-sv>${icon('save')} Salvar</button>` });
+      footer: `<button class="btn danger" data-del style="margin-right:auto">${icon('trash-2')}</button><button class="btn" data-pr>${icon('printer')} Imprimir / PDF</button><button class="btn" data-so title="Grava o PDF na pasta COMERCIAL da obra (OneDrive › 00_SERVIÇOS)">${icon('folder-input')} Salvar na pasta da obra</button><button class="btn" data-abc>${icon('bar-chart-3')} Curva ABC</button><button class="btn" data-pp>${icon('send')} Proposta VTN</button><button class="btn" data-ct>${icon('file-signature')} Gerar contrato</button><button class="btn" data-ob>${icon('hard-hat')} Criar obra</button><button class="btn primary" data-sv>${icon('save')} Salvar</button>` });
     const body = m.$('#ob');
     const draw = () => {
       if (o.ordemItens !== 'manual') o.itens = itensAZ(o.itens);
@@ -102,6 +102,7 @@ Views.orcamentos = {
       m.close();
       Views.obras.edit(null, { nome: x.titulo.replace(/^Orçamento\s*[–-]\s*/i, ''), clienteIds: clientesDe(x).slice(), valorContrato: Calc.orcTotal(x).total, status: 'Contratada', descricao: x.obs });
     };
+    m.$('[data-abc]').onclick = () => { save(); Ferramentas.abc(id); };
     m.$('[data-pp]').onclick = () => { save(); m.close(); const x = Store.get('orcamentos', id); const obra = x.modeloVTN === 'obra_mo' ? 'vtn_carta_proposta_obra' : x.modeloVTN === 'vistoria' ? 'vtn_carta_proposta_vistoria' : 'vtn_proposta_2026'; Views.propostas.novo({ modelo: obra, obraId: x.obraId, clienteIds: (Store.get('obras', x.obraId) || {}).clienteIds || clientesDe(x), valor: Calc.orcTotal(x).total, orcamentoId: id, condicoes: x.condicoes, titulo: x.titulo.replace(/^Orçamento\s*[–-]\s*/i, ''), naoIncluso: (x.obs || '').replace(/^Não inclusos?:\s*/i, '').split(/[;,.]\s*/).filter(Boolean).join('\n') }); };
     m.$('[data-ct]').onclick = () => { save(); m.close(); const x = Store.get('orcamentos', id); Views.contratos.novo({ obraId: x.obraId, clienteIds: (Store.get('obras', x.obraId) || {}).clienteIds || clientesDe(x), valor: Calc.orcTotal(x).total, orcamentoId: id, condicoes: x.condicoes, titulo: 'Contrato – ' + x.titulo }); };
   },

@@ -11,7 +11,7 @@ window.Drive = (() => {
   // só o nº oficial da pasta (OB-0072 / numero "72"); OB-I05 etc. não têm pasta numerada
   const numeroDa = ob => !ob ? 0 : (/^\d+$/.test(String(ob.numero || '').trim()) ? parseInt(ob.numero, 10) : parseInt((/^OB-(\d+)$/.exec(ob.id) || [])[1], 10) || 0);
   // fase de cada tipo de documento
-  const FASE = { 'Orçamento': 'COMERCIAL', Proposta: 'COMERCIAL', Contrato: 'COMERCIAL', Recibo: 'EXECUÇÃO', Termo: 'ENTREGA', 'Declaração': 'ENTREGA' };
+  const FASE = { 'Orçamento': 'COMERCIAL', Proposta: 'COMERCIAL', Contrato: 'COMERCIAL', Recibo: 'EXECUÇÃO', Termo: 'ENTREGA', 'Declaração': 'ENTREGA', PCI: 'COMERCIAL', PLS: 'EXECUÇÃO' };
   const paginaCompleta = (corpo, titulo) => {
     const css = [...document.styleSheets].map(ss => { try { return [...ss.cssRules].map(r => r.cssText).join('\n'); } catch (e) { return ''; } }).join('\n');
     return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${UI.esc(titulo || 'Documento')}</title><style>${css}</style><style>body{background:#fff;margin:0}.doc{border:0;max-width:none;padding:0;box-shadow:none}@page{margin:16mm}</style></head><body><div class="doc">${corpo}</div></body></html>`;
@@ -40,7 +40,7 @@ window.Drive = (() => {
     const ob = rec && Store.get('obras', rec.obraId); const n = numeroDa(ob);
     if (!n || !pode() || !blob) return null;
     const pasta = String(rec.pasta || '').trim(); const sub = /^\(raiz\)$/i.test(pasta) ? '' : pasta;
-    const q = new URLSearchParams({ numero: n, nome: ob.nome || '', arquivo: rec.nome || 'arquivo', fase: '', sub });
+    const q = new URLSearchParams({ numero: n, nome: ob.nome || '', arquivo: rec.nome || 'arquivo', fase: rec.fase || '', sub });
     try { const r = await VTN_PASTA.enviarArquivo('obra-arquivo?' + q.toString(), blob); return r.caminho; } catch (e) { UI.toast('Anexo não foi para a pasta da obra: ' + e.message, 'err'); return null; }
   }
   return { numeroDa, criarPasta, salvarDoc, anexar, FASE };

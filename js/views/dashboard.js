@@ -46,6 +46,7 @@ Views.dashboard = {
     Fiscal.ocorrencias(Fiscal.addDays(hoje, -60), Fiscal.addDays(hoje, 7)).filter(o => o.status === 'atrasado' || o.status === 'pendente').forEach(o => alertas.push([o.data < hoje ? 'err' : 'warn', 'landmark', `${o.obrig.nome} – ${o.data < hoje ? 'venceu' : 'vence'} ${date(o.data)}`, null]));
     Store.all('obras').forEach(o => { const pz = Calc.prazo(o); if (pz.atraso > 0) alertas.push(['err', 'clock', `${o.nome}: ${pz.atraso} dias além do prazo`, o.id]); });
     (window.Enq ? Enq.alertas() : []).forEach(a => alertas.unshift([a[0], a[1], a[2], null]));
+    (window.Ferramentas ? Ferramentas.alertas() : []).forEach(a => alertas.unshift(a));
     (window.Conhecimento ? Conhecimento.ALERTAS : []).filter(a => UI.daysBetween(hoje, a.data) <= 90 && UI.daysBetween(a.data, hoje) <= 30).forEach(a => alertas.unshift([a.nivel, 'siren', a.titulo, null]));
     const ativas = Store.where('obras', o => ['Em execução', 'Contratada', 'Em entrega'].includes(o.status)).sort((a, b) => (+b.valorContrato || 0) - (+a.valorContrato || 0)).slice(0, 8);
     c.innerHTML = `<div class="grid g4">

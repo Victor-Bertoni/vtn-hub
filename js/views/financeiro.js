@@ -4,7 +4,7 @@ Views.financeiro = {
   st: { tab: 'caixa', obra: '', tipo: '', status: '', cat: '', de: '', ate: '', q: '' },
   render(el, tab) {
     const { icon, money, esc } = UI; const s = this.st; if (tab) s.tab = tab;
-    const T = [['caixa', 'Caixa / lançamentos', 'list'], ['receber', 'A receber', 'hand-coins'], ['pagar', 'A pagar', 'receipt'], ['balanco', 'Balanço (DRE)', 'scale'], ['obras', 'Lucro por obra', 'hard-hat'], ['auditoria', 'Auditoria', 'shield-check']];
+    const T = [['caixa', 'Caixa / lançamentos', 'list'], ['receber', 'A receber', 'hand-coins'], ['pagar', 'A pagar', 'receipt'], ['indice', 'Índice de caixa', 'gauge'], ['fluxo', 'Fluxo por obra', 'git-compare'], ['socios', 'Pró-labore e lucros', 'users'], ['balanco', 'Balanço (DRE)', 'scale'], ['obras', 'Lucro por obra', 'hard-hat'], ['auditoria', 'Auditoria', 'shield-check']];
     const f = Calc.fin(s.obra || null, { de: s.de, ate: s.ate });
     el.innerHTML = `
       <div class="page-head"><div><h1>Caixa e balanço</h1><p>Receitas, despesas, pagamentos e lucro da empresa e de cada obra</p></div>
@@ -76,6 +76,64 @@ Views.financeiro = {
   },
   t_receber(c) { const ls = this.filtrados().filter(l => l.tipo === 'receita' && l.status !== 'pago').sort((a, b) => (a.vencimento || '').localeCompare(b.vencimento || '')); c.innerHTML = `<div class="card">${this.tabela(ls)}</div>`; this.bindPagar(c); },
   t_pagar(c) { const ls = this.filtrados().filter(l => l.tipo === 'despesa' && l.status !== 'pago').sort((a, b) => (a.vencimento || '').localeCompare(b.vencimento || '')); c.innerHTML = `<div class="card">${this.tabela(ls)}</div>`; this.bindPagar(c); },
+  /* ÍNDICE DE CAIXA: quanto o dinheiro em caixa cobre as contas que vencem, e quanto tempo a empresa aguenta.
+     Regime de caixa: saldo = tudo que entrou − tudo que saiu (lançamentos pagos até hoje). Usa o filtro de obra; ignora o filtro de datas. */
+  indiceCaixa(obra) {
+    const hoje = UI.today(), dia = n => { const d = new Date(hoje + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const L = Store.all('lancamentos').filter(l => !obra || l.obraId === obra);
+    const sinal = l => l.tipo === 'receita' ? +l.valor || 0 : -(+l.valor || 0);
+    const pagos = L.filter(l => l.status === 'pago' && (l.dataPagamento || l.data || '') <= hoje);
+    const saldo = pagos.reduce((a, l) => a + sinal(l), 0);
+    const pend = L.filter(l => l.status !== 'pago');
+    const vence = l => l.vencimento || l.data || hoje;
+    const ate = (tipo, d) => pend.filter(l => l.tipo === tipo && vence(l) <= d).reduce((a, l) => a + (+l.valor || 0), 0);
+    const pagar30 = ate('despesa', dia(30)), receber30 = ate('receita', dia(30));
+    const vencPagar = ate('despesa', dia(-1)), vencReceber = ate('receita', dia(-1));
+    const desde = dia(-90); const saida90 = pagos.filter(l => l.tipo === 'despesa' && (l.dataPagamento || l.data) >= desde).reduce((a, l) => a + (+l.valor || 0), 0);
+    const entrada90 = pagos.filter(l => l.tipo === 'receita' && (l.dataPagamento || l.data) >= desde).reduce((a, l) => a + (+l.valor || 0), 0);
+    const mediaSaida = saida90 / 3, mediaEntrada = entrada90 / 3;
+    // projeção dia a dia (90 dias): pendentes entram/saem no vencimento; vencidos contam hoje
+    const proj = []; let s = saldo;
+    for (let k = 0; k <= 90; k++) { const d = dia(k); s += pend.filter(l => (k === 0 ? vence(l) <= d : vence(l) === d)).reduce((a, l) => a + sinal(l), 0); proj.push([d, s]); }
+    const minimo = proj.reduce((m, x) => x[1] < m[1] ? x : m, proj[0]);
+    return { saldo, pagar30, receber30, vencPagar, vencReceber, mediaSaida, mediaEntrada,
+      imediata: pagar30 ? saldo / pagar30 : null, liquidez30: pagar30 ? (saldo + receber30) / pagar30 : null,
+      folego: mediaSaida ? saldo / mediaSaida : null, proj, minimo };
+  },
+  t_indice(c) {
+    const { money, icon, date, esc } = UI; const s = this.st; const k = this.indiceCaixa(s.obra || null);
+    const num = v => v == null ? '—' : (Math.round(v * 100) / 100).toFixed(2).replace('.', ',');
+    // faixas: ≥ 1,5 folgado · 1 a 1,5 atenção · < 1 aperto (o caixa não cobre as contas)
+    const faixa = v => v == null ? ['ok', 'check-circle-2', 'Sem contas a pagar em 30 dias'] : v >= 1.5 ? ['ok', 'check-circle-2', 'Folgado'] : v >= 1 ? ['warn', 'alert-triangle', 'Atenção'] : ['err', 'alert-octagon', 'Aperto: o caixa não cobre'];
+    const tile = (titulo, v, conta, explica) => { const f = faixa(v); return `<div class="card kpi ${f[0]}"><div class="ico">${icon('gauge')}</div><div class="lbl">${titulo}</div><div class="val">${num(v)}</div><div class="sub">${icon(f[1])} <b>${f[2]}</b></div><div class="tiny muted mt">${conta}</div><div class="tiny muted">${explica}</div></div>`; };
+    const fol = k.folego == null ? '—' : k.folego >= 24 ? '24+ meses' : (Math.round(k.folego * 10) / 10).toString().replace('.', ',') + ' meses';
+    const folCls = k.folego == null ? 'ok' : k.folego >= 3 ? 'ok' : k.folego >= 1 ? 'warn' : 'err';
+    const fx = Calc.fluxoMensal(s.obra || null, 0).slice(-12);
+    let acum = k.saldo - fx.reduce((a, x) => a + (x.receita - x.despesa), 0);
+    const meses = fx.map(x => { acum += x.receita - x.despesa; return Object.assign({}, x, { final: acum }); });
+    c.innerHTML = `<div class="alert info mb">${icon('info')}<div><b>Índice de caixa</b> mostra se o dinheiro que já está em caixa paga as contas que vão vencer. Acima de <b>1,5</b> está folgado; entre <b>1 e 1,5</b>, atenção; abaixo de <b>1</b>, o caixa não cobre as contas e é preciso receber antes de pagar. ${s.obra ? 'Calculado só para a obra ' + esc(s.obra) + '.' : 'Calculado para a empresa toda (todas as obras + geral).'}</div></div>
+      <div class="grid g4">
+        <div class="card kpi ${k.saldo >= 0 ? 'ok' : 'err'}"><div class="ico">${icon('wallet')}</div><div class="lbl">Saldo em caixa hoje</div><div class="val">${money(k.saldo)}</div><div class="sub">tudo que entrou − tudo que saiu</div></div>
+        ${tile('Índice de caixa imediato', k.imediata, `${money(k.saldo)} ÷ ${money(k.pagar30)}`, 'saldo de hoje ÷ contas a pagar nos próximos 30 dias (inclui vencidas)')}
+        ${tile('Índice de caixa 30 dias', k.liquidez30, `(${money(k.saldo)} + ${money(k.receber30)}) ÷ ${money(k.pagar30)}`, 'saldo + o que vai receber em 30 dias ÷ o que vai pagar em 30 dias')}
+        <div class="card kpi ${folCls}"><div class="ico">${icon('hourglass')}</div><div class="lbl">Fôlego do caixa</div><div class="val">${fol}</div><div class="sub">quanto tempo o saldo paga as saídas</div><div class="tiny muted mt">saída média: ${money(k.mediaSaida)}/mês (últimos 3 meses)</div><div class="tiny muted">entrada média: ${money(k.mediaEntrada)}/mês</div></div>
+      </div>
+      <div class="grid g2 mt">
+        <div class="card"><div class="card-h"><div><h3>Saldo projetado – próximos 90 dias</h3><div class="tiny muted">com as contas a pagar e a receber já lançadas, cada uma no seu vencimento</div></div></div><div class="card-b"><div class="chart-box"><canvas id="chIdx"></canvas></div>
+          <div class="tiny mt">${k.minimo[1] < 0 ? `${icon('alert-octagon')} <b style="color:var(--err)">O caixa fica negativo</b>: ponto mais baixo de ${money(k.minimo[1])} em ${date(k.minimo[0])}.` : `${icon('check-circle-2')} Ponto mais baixo: <b>${money(k.minimo[1])}</b> em ${date(k.minimo[0])}.`}</div></div></div>
+        <div class="card"><div class="card-h"><h3>O que pesa no índice</h3></div><div class="card-b p0"><table class="t"><tbody>
+          <tr><td>A pagar em 30 dias</td><td class="num"><b>${money(k.pagar30)}</b></td></tr>
+          <tr><td style="padding-left:28px">já vencido</td><td class="num" style="color:${k.vencPagar ? 'var(--err)' : ''}">${money(k.vencPagar)}</td></tr>
+          <tr><td>A receber em 30 dias</td><td class="num"><b>${money(k.receber30)}</b></td></tr>
+          <tr><td style="padding-left:28px">já vencido (cobrar)</td><td class="num" style="color:${k.vencReceber ? 'var(--err)' : ''}">${money(k.vencReceber)}</td></tr>
+          <tr><td>Saldo depois de 30 dias</td><td class="num"><b style="color:${k.saldo + k.receber30 - k.pagar30 >= 0 ? 'var(--ok)' : 'var(--err)'}">${money(k.saldo + k.receber30 - k.pagar30)}</b></td></tr>
+        </tbody></table><div class="card-b tiny muted">Para o índice ficar certo, lance as contas a pagar e a receber com vencimento. O saldo inicial do caixa (dinheiro que já existia antes do app) entra como um lançamento de receita “Saldo inicial”.</div></div></div>
+      </div>
+      <div class="card mt"><div class="card-h"><h3>Caixa mês a mês (últimos 12 meses)</h3></div>${UI.table([{ h: 'Mês', f: x => Calc.mesLabel(x.mes) }, { h: 'Entrou', num: 1, f: x => money(x.receita) }, { h: 'Saiu', num: 1, f: x => money(x.despesa) }, { h: 'Resultado do mês', num: 1, f: x => `<b style="color:${x.receita - x.despesa >= 0 ? 'var(--ok)' : 'var(--err)'}">${money(x.receita - x.despesa)}</b>` }, { h: 'Saldo no fim do mês', num: 1, f: x => money(x.final) }], meses.slice().reverse(), { emptyMsg: 'Sem lançamentos pagos.' })}</div>`;
+    const cor = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim() || '#18c20e';
+    UI.chart('chIdx', { type: 'line', data: { labels: k.proj.map(x => date(x[0])), datasets: [{ label: 'Saldo projetado', data: k.proj.map(x => Math.round(x[1] * 100) / 100), borderColor: cor, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, tension: 0, stepped: true }, { label: 'Zero', data: k.proj.map(() => 0), borderColor: '#94a3b8', borderDash: [4, 4], borderWidth: 1, pointRadius: 0, pointHoverRadius: 0 }] },
+      options: { interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { filter: i => i.datasetIndex === 0, callbacks: { label: i => 'Saldo: ' + money(i.parsed.y) } } }, scales: { x: { ticks: { maxTicksLimit: 7 } }, y: { ticks: { callback: v => UI.moneyK(v) } } } } });
+  },
   t_balanco(c) {
     const { money, pct } = UI; const s = this.st;
     const fx = Calc.fluxoMensal(s.obra || null, 0).filter(x => (!s.de || x.mes >= s.de.slice(0, 7)) && (!s.ate || x.mes <= s.ate.slice(0, 7)));

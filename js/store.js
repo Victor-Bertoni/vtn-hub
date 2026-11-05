@@ -22,7 +22,7 @@ window.Store = (() => {
   function setDb(d) { db = d; return norm(); }
   function norm() {
     // garante coleções novas em versões futuras
-    ['usuarios','pessoas','obras','etapas','medicoes','lancamentos','os','pendencias','entregas','revisoes','arquivos','eventos','grupos','mensagens','orcamentos','contratos','diario','catalogo','modelosContrato']
+    ['usuarios','pessoas','obras','etapas','medicoes','lancamentos','os','pendencias','entregas','revisoes','arquivos','eventos','grupos','mensagens','orcamentos','contratos','diario','catalogo','modelosContrato','compras']
       .forEach(c => { if (!Array.isArray(db[c])) db[c] = []; });
     db.incidencias = db.incidencias || {};
     db.seq = db.seq || {};
@@ -36,7 +36,7 @@ window.Store = (() => {
     }
     listeners.forEach(f => f());
   }
-  const PREFIX = { usuarios:'US', pessoas:'PS', obras:'OB', etapas:'ET', medicoes:'MD', lancamentos:'FN', os:'OS', pendencias:'PD', entregas:'EN', revisoes:'RV', arquivos:'AR', eventos:'EV', grupos:'GR', mensagens:'MS', orcamentos:'ORC', contratos:'CT', diario:'DI', catalogo:'SV', insumos:'IN', composicoes:'CP' };
+  const PREFIX = { usuarios:'US', pessoas:'PS', obras:'OB', etapas:'ET', medicoes:'MD', lancamentos:'FN', os:'OS', pendencias:'PD', entregas:'EN', revisoes:'RV', arquivos:'AR', eventos:'EV', grupos:'GR', mensagens:'MS', orcamentos:'ORC', contratos:'CT', compras:'CM', diario:'DI', catalogo:'SV', insumos:'IN', composicoes:'CP' };
   function nextId(coll) {
     const p = PREFIX[coll] || 'ID';
     db.seq[p] = (db.seq[p] || 0) + 1;
