@@ -23,6 +23,7 @@ Views.config = {
             <p class="tiny muted" style="margin:0">Uso: ${UI.size(new Blob([Store.exportJSON()]).size)} de ~5 MB (dados). Arquivos enviados ficam no IndexedDB.</p></div></div>
         </div>
       </div>
+      <div id="srvCard"></div>
       <div class="card mt"><div class="card-h"><h3>Usuários</h3><button class="btn sm primary" id="nu">${icon('user-plus')} Novo usuário</button></div>
         ${us.some(u => u.status === 'pendente' || u.pedidoSenha) ? `<div class="card-b"><div class="alert warn">${icon('bell')}<div>${us.filter(u => u.status === 'pendente').length} conta(s) aguardando aprovação · ${us.filter(u => u.pedidoSenha).length} pedido(s) de nova senha</div></div></div>` : ''}
         ${UI.table([{ h: 'ID', f: u => `<span class="idlink" data-u="${u.id}">${u.id}</span>` }, { h: 'Nome', f: u => esc(u.nome) }, { h: 'E-mail (login)', f: u => esc(u.email) }, { h: 'Telefone', f: u => esc(u.telefone || '—') },
@@ -32,6 +33,7 @@ Views.config = {
           { h: '', f: u => `<div class="row" style="flex-wrap:nowrap">${u.status === 'pendente' ? `<button class="btn sm primary" data-ap="${u.id}">Aprovar</button>` : ''}<button class="btn sm" data-rs="${u.id}">Redefinir senha</button><button class="btn sm ghost" data-u="${u.id}">Editar</button></div>` }], us)}</div>
       <div class="card mt"><div class="card-h"><h3>Privilégios por papel</h3><span class="tiny muted">Edite em js/config.js → PAPEIS</span></div><div class="table-wrap"><table class="t perm-grid"><thead><tr><th>Permissão</th>${Object.values(PAPEIS).map(p => `<th>${esc(p.nome)}</th>`).join('')}</tr></thead><tbody>
         ${PERMISSOES.map(([k, l]) => `<tr><td>${esc(l)} <span class="tiny muted mono">${k}</span></td>${Object.values(PAPEIS).map(p => `<td>${p.perms.includes('*') || p.perms.includes(k) ? `<span style="color:var(--ok)">${icon('check')}</span>` : '<span class="muted">—</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+    try { window.Servidores && Servidores.card(UI.$('#srvCard', el)); } catch (e) {}
     if (UI.$('#pmEdit', el)) UI.$('#pmEdit', el).onclick = () => window.Parametros && Parametros.editor();
     if (UI.$('#dkBaixar', el)) UI.$('#dkBaixar', el).onclick = e => window.Desktop && Desktop.gerar(e.target);
     if (UI.$('#brapiOk', el)) UI.$('#brapiOk', el).onclick = () => { Store.db.empresa.brapiToken = UI.$('#brapi', el).value.trim(); Store.save(); UI.toast('Chave salva'); window.Mercado && Mercado.atualizar(); };

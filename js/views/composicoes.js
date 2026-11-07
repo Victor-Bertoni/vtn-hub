@@ -232,7 +232,8 @@ Views.composicoes = {
       if (!mes || !on['R8-N']) return UI.toast('Informe o mês e pelo menos o R8-N.', 'err');
       const hist = (cub.hist || []).filter(h => h[0] !== mes).concat([[mes, on['R8-N']]]).sort((a, b) => a[0].localeCompare(b[0])).slice(-13);
       const des = +m.$('#cbdes').value; const histDes = des ? (cub.histDes || []).filter(h => h[0] !== mes).concat([[mes, des]]).sort((a, b) => a[0].localeCompare(b[0])).slice(-13) : (cub.histDes || []);
-      const novo = Object.assign({}, cub, { mes, onerado: Object.assign({}, O, on), varMes: vm, desonerado: des ? { 'R8-N': des } : (cub.desonerado || {}), hist, histDes, fonte: 'Sinduscon-MG (CUB/m², NBR 12721) – digitado no VTN Hub em ' + new Date().toLocaleDateString('pt-BR') });
+      const histLongo = (cub.histLongo || cub.hist || []).filter(h => h[0] !== mes).concat([[mes, on['R8-N']]]).sort((a, b) => a[0].localeCompare(b[0])).slice(-180);
+      const novo = Object.assign({}, cub, { mes, onerado: Object.assign({}, O, on), varMes: vm, desonerado: des ? { 'R8-N': des } : (cub.desonerado || {}), hist, histDes, histLongo, fonte: 'Sinduscon-MG (CUB/m², NBR 12721) – digitado no VTN Hub em ' + new Date().toLocaleDateString('pt-BR') });
       const ini = hist.find(h => h[0].endsWith('-12') && h[0] < mes); if (ini) novo.acAno = +((on['R8-N'] / ini[1] - 1) * 100).toFixed(2);
       if (hist.length >= 13) novo.ac12 = +((on['R8-N'] / hist[0][1] - 1) * 100).toFixed(2);
       try { const db = await claude.use('db'); await db.collection('sistema').doc('cub').set(novo); m.close(); UI.toast('CUB de ' + this.mesNome(mes) + ' salvo para todos'); App.refresh(); }

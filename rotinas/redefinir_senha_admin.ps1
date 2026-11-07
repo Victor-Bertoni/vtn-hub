@@ -6,6 +6,7 @@
 . (Join-Path $PSScriptRoot 'config.ps1')
 . (Join-Path $PSScriptRoot 'copia.ps1')
 . (Join-Path $PSScriptRoot 'email.ps1')
+Usar-PastaCompartilhada   # vale em todos os servidores (principal e reservas)
 Write-Host 'REDEFINIR SENHA DE ADMINISTRADOR DO VTN HUB' -ForegroundColor Cyan
 $adms = @(Usuarios-Ativos | Where-Object { $_.papel -eq 'admin' })
 for ($i = 0; $i -lt $adms.Count; $i++) { Write-Host ("  {0}) {1} <{2}>" -f ($i + 1), $adms[$i].nome, $adms[$i].email) }

@@ -716,3 +716,13 @@ body.com-mercado .modal-bg{padding-bottom:calc(var(--rodape) + 16px)}
 @media (max-width:420px){
   .topbar .enq-chip{display:none}
 }
+/* filtros dos relatórios */
+.rf-card .card-h h3{display:flex;align-items:center;gap:8px}
+.rf-grid{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.rf-multi{position:relative}
+.rf-multi>summary{list-style:none;cursor:pointer;border:1px solid var(--line,#e2e8f0);border-radius:10px;padding:7px 12px;font-size:13px;background:var(--card,#fff);display:inline-flex;gap:6px;align-items:center}
+.rf-multi>summary::after{content:'▾';color:#64748b}
+.rf-multi[open]>summary{border-color:var(--brand,#2563eb)}
+.rf-box{position:absolute;z-index:30;top:calc(100% + 4px);left:0;min-width:260px;max-width:360px;background:var(--card,#fff);border:1px solid var(--line,#e2e8f0);border-radius:12px;box-shadow:0 12px 30px rgba(15,23,42,.18);padding:10px}
+.rf-opts{max-height:260px;overflow:auto;display:grid;gap:4px;margin-top:6px;font-size:13px}
+.input.sm{padding:6px 9px;font-size:13px}

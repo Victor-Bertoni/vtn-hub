@@ -168,6 +168,20 @@ Regras para quem for alterar:
   os secrets `VTN_KEYSTORE_B64`/`VTN_KEYSTORE_SENHA` fixam a assinatura (sem eles, cada APK novo exige
   desinstalar o anterior).
 
+## 7b. Servidor principal e reservas (desde 2026-11-06)
+
+* Só **um** computador fica **ativo** por vez; os outros com a pasta 00_VTN no OneDrive ficam de **reserva**.
+* `endereco.json` (ramo `consulta`) traz `url`, `pc`, `vivoEm` (sinal de vida a cada 2 min), `pedido` e `cedido` (troca).
+* Ordem: `BANCO DE DADOS\sistema\servidores.json` (Configurações › Servidores). Estado de cada um:
+  `BANCO DE DADOS\sistema\servidores\<computador>.json`.
+* Ativo sem sinal há 5 min → a reserva assume (a 2ª espera +2 min). Principal de volta → pede a vez; o ativo para de gravar,
+  grava `_troca.json`; o principal assume quando o OneDrive trouxe a marca e ficou 60 s quieto.
+* `OneDrive\00_VTN\_servidor` (fora do banco, o app não lê): sessões, senhas novas de admin, chaves da cópia e token do GitHub
+  (embrulhados) para a reserva assumir sem pedir nada; e **INSTALAR SERVIDOR VTN HUB.cmd** para pôr outro computador como servidor.
+* `energia_e_inicio.ps1` (administrador): na tomada não dorme/hiberna e a tampa fechada não faz nada; a tarefa Servidor liga
+  junto com o Windows mesmo sem ninguém entrar (S4U, sem guardar senha).
+* O app confere a cada 20 s; se o servidor cair no meio do uso, procura o ativo e continua (sem perder o login).
+
 ## 8. Instalação
 
 **Computador do Victor (uma vez):** rodar `INSTALAR VTN HUB` (área de trabalho) ou `rotinas\instalar_rotinas.ps1`.

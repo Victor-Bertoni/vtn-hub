@@ -33,23 +33,45 @@ function Iniciar-Tunel {
   $pi.Arguments = "tunnel --no-autoupdate --loglevel info --logfile `"$CfLog`" --url http://localhost:$Porta --http-host-header localhost:$Porta"
   $pi.UseShellExecute = $false; $pi.CreateNoWindow = $true
   $script:procTunel = [Diagnostics.Process]::Start($pi)
-  $script:urlTunel = ''
+  $script:urlTunel = ''; $script:urlCandidato = ''
   Escrever-Log 'Túnel da Cloudflare iniciando...'
 }
 
-# Chamar de tempos em tempos. Devolve $true quando aparece um endereço novo.
+function Parar-Tunel {
+  try { if ($script:procTunel -and -not $script:procTunel.HasExited) { $script:procTunel.Kill() } } catch { }
+  $script:procTunel = $null; $script:urlTunel = ''; $script:urlCandidato = ''
+}
+
+# Chamar de tempos em tempos. Devolve $true quando aparece um endereço novo JÁ FUNCIONANDO.
+# O endereço só é publicado depois de responder pela internet: se o app tentasse antes, o aparelho
+# guardava "endereço não existe" e ficava preso no modo consulta mesmo com o PC ligado.
+$script:urlCandidato = ''; $script:candidatoDesde = [datetime]::MinValue; $script:testeTunel = $null
+Add-Type -AssemblyName System.Net.Http
+$script:clienteHttp = New-Object Net.Http.HttpClient; $script:clienteHttp.Timeout = [TimeSpan]::FromSeconds(10)
 function Vigiar-Tunel {
   if (-not $script:procTunel) { return $false }
   if ($script:procTunel.HasExited) { Escrever-Log 'Túnel caiu; ligando de novo'; Iniciar-Tunel; return $false }
   if ($script:urlTunel) { return $false }
-  try {
-    $fs = [IO.File]::Open($CfLog, 'Open', 'Read', 'ReadWrite'); $sr = New-Object IO.StreamReader($fs); $t = $sr.ReadToEnd(); $sr.Close()
-    if ($t -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-      $script:urlTunel = $Matches[0] + '/'
-      [IO.File]::WriteAllText($ArqEndereco, $script:urlTunel)
-      Escrever-Log "Endereço da internet: $($script:urlTunel)"
-      return $true
-    }
-  } catch { }
+  if (-not $script:urlCandidato) {
+    try {
+      $fs = [IO.File]::Open($CfLog, 'Open', 'Read', 'ReadWrite'); $sr = New-Object IO.StreamReader($fs); $t = $sr.ReadToEnd(); $sr.Close()
+      if ($t -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $script:urlCandidato = $Matches[0] + '/'; $script:candidatoDesde = Get-Date }
+    } catch { }
+    if (-not $script:urlCandidato) { return $false }
+  }
+  # teste sem travar: o próprio servidor precisa responder a esse pedido enquanto ele espera
+  $ok = $false
+  if ($script:testeTunel -and $script:testeTunel.IsCompleted) {
+    try { $ok = ($script:testeTunel.Status -eq 'RanToCompletion') -and ($script:testeTunel.Result -match '"ok"\s*:\s*true') } catch { }
+    $script:testeTunel = $null
+  }
+  if (-not $ok -and -not $script:testeTunel) { try { $script:testeTunel = $script:clienteHttp.GetStringAsync($script:urlCandidato + 'api/info?teste=' + [guid]::NewGuid().ToString('N')) } catch { } }
+  if ($ok) {
+    $script:urlTunel = $script:urlCandidato
+    [IO.File]::WriteAllText($ArqEndereco, $script:urlTunel)
+    Escrever-Log "Endereço da internet (testado): $($script:urlTunel)"
+    return $true
+  }
+  if (((Get-Date) - $script:candidatoDesde).TotalMinutes -ge 3) { Escrever-Log 'Túnel não respondeu em 3 min; abrindo outro'; Iniciar-Tunel }
   return $false
 }

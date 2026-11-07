@@ -6,7 +6,8 @@
 #  Não precisa colar nada: depois de gerar o token, clique no ícone de copiar —
 #  esta janela pega o código da área de transferência sozinha e depois a limpa.
 #  O token fica guardado protegido pelo Windows neste computador
-#  (%LOCALAPPDATA%\VTN_Hub\github_token.bin), nunca no OneDrive nem no GitHub.
+#  (%LOCALAPPDATA%\VTN_Hub\github_token.bin) e, embrulhado, em OneDrive\00_VTN\_servidor (fora do banco)
+#  para os servidores reserva. Nunca vai para o GitHub.
 # =========================================================
 param([switch]$SemPausa)
 . (Join-Path $PSScriptRoot 'config.ps1')
@@ -40,12 +41,10 @@ if (-not $tok) { Write-Host 'Não recebi o token. Rode "INSTALAR VTN HUB" de nov
 
 Protegido-Gravar $ArqToken $utf8sb.GetBytes($tok)
 Write-Host 'OK  token guardado (protegido pelo Windows)' -ForegroundColor Green
-try {
-  Publicar-Copia $Banco (Usuarios-Ativos) $Repo | Out-Null
-  Escrever-Log 'Publicação no GitHub ligada (endereço + cópia de consulta)'
-  Write-Host 'OK  endereço e cópia de consulta publicados no GitHub' -ForegroundColor Green
-  Write-Host 'Cada pessoa passa a abrir a cópia (PC desligado) depois de entrar uma vez com este PC ligado.'
-} catch { Write-Host "Não foi possível publicar agora: $($_.Exception.Message)" -ForegroundColor Red }
+Compartilhar-Token   # os servidores reserva (outros computadores com a pasta 00_VTN) usam o mesmo acesso
+Escrever-Log 'Publicação no GitHub ligada (o servidor ativo publica endereço + cópia de consulta)'
+Write-Host 'OK  o servidor publica o endereço e a cópia de consulta em instantes' -ForegroundColor Green
+Write-Host 'Cada pessoa passa a abrir a cópia (servidor desligado) depois de entrar uma vez com o servidor ligado.'
 # reinicia o servidor para ele manter endereço e cópia atualizados
 try { Stop-ScheduledTask -TaskPath '\VTN Hub\' -TaskName 'Servidor' -ErrorAction SilentlyContinue; Start-Sleep 2; Start-ScheduledTask -TaskPath '\VTN Hub\' -TaskName 'Servidor' } catch { }
 if (-not $SemPausa) { Start-Sleep 15 }

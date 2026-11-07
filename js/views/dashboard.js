@@ -30,6 +30,18 @@ Views.dashboard = {
     UI.$$('[data-t]', el).forEach(b => b.onclick = () => { s.tab = b.dataset.t; App.refresh(); });
     this['t_' + s.tab](UI.$('#dc', el), g);
   },
+  // cards extras: caixa, CAIXA/PLS, compras, diário, comercial e mês atual
+  maisCards() {
+    const { pct } = UI; const moneyK = v => UI.money(v).replace(/,\d\d$/, ''); const out = []; const hoje = UI.today(), mes = hoje.slice(0, 7);
+    try { if (Auth.can('financeiro.ver') && Views.financeiro.indiceCaixa) { const k = Views.financeiro.indiceCaixa(null); out.push(this.kpi(k.minimo[1] < 0 ? 'err' : k.imediata != null && k.imediata < 1 ? 'warn' : 'ok', 'gauge', 'Índice de caixa', k.imediata == null ? '—' : UI.num(k.imediata, 2) + 'x', `Fôlego ${k.folego == null ? '—' : UI.num(k.folego, 1) + ' meses'} · menor saldo 90 d ${moneyK(k.minimo[1])}`)); } } catch (e) {}
+    try { const O = Store.all('obras').filter(o => o.pci && ['Contratada', 'Em execução'].includes(o.status)); if (O.length) { let risco = 0; O.forEach(o => { const ms = Store.where('medicoes', m => m.obraId === o.id).sort((a, b) => (a.data || '').localeCompare(b.data || '')); const u = ms[ms.length - 1]; if (u && /risco|Atrasada|Paralisada|atenção/i.test(u.situacao || '')) risco++; }); out.push(this.kpi(risco ? 'warn' : 'ok', 'landmark', 'Obras CAIXA', O.length, risco ? `${risco} em atenção/risco na última PLS` : 'Todas normais na última PLS')); } } catch (e) {}
+    try { const C = Store.all('compras'); if (C.length) { const ab = C.filter(c => ['Cotando', 'Aprovado', 'Comprado'].includes(c.status)).length; const VC = Views.compras; const econ = C.filter(c => c.escolhido != null && c.status !== 'Cancelado').reduce((a, c) => { const t = VC.totais(c).filter(v => v > 0); return a + (t.length > 1 ? Math.max(...t) - VC.totais(c)[c.escolhido] : 0); }, 0); out.push(this.kpi('info', 'shopping-cart', 'Compras em andamento', ab, `Economia nas cotações ${moneyK(econ)}`)); } } catch (e) {}
+    try { const D = Store.where('diario', d => (d.data || '').startsWith(mes)); out.push(this.kpi('', 'notebook-pen', 'Diário de obra no mês', D.length + ' dias', `${D.reduce((a, d) => a + (d.fotos || []).length, 0)} fotos · ${new Set(D.map(d => d.obraId)).size} obras`)); } catch (e) {}
+    try { const O = Store.all('obras'); const fech = O.filter(o => !['Prospecção', 'Orçamento'].includes(o.status)); const g = fech.filter(o => o.status !== 'Cancelada').length; const orc = Store.all('orcamentos'); out.push(this.kpi('violet', 'target', 'Conversão comercial', pct(fech.length ? g / fech.length * 100 : 0, 0), `${O.filter(o => ['Prospecção', 'Orçamento'].includes(o.status)).length} oportunidades · ${orc.filter(o => o.status === 'Enviado').length} orçamentos enviados`)); } catch (e) {}
+    try { if (Auth.can('financeiro.ver')) { const f = Calc.fin(null, { de: mes + '-01', ate: mes + '-31' }); out.push(this.kpi(f.lucro >= 0 ? 'ok' : 'err', 'calendar-check', 'Resultado do mês', moneyK(f.lucro), `Entrou ${moneyK(f.receitaPaga)} · saiu ${moneyK(f.despesaPaga)}`)); } } catch (e) {}
+    try { const I = window.Indices; if (I && I.dados) { const m12 = Enq.addM(UI.today().slice(0, 7), -13); const a = k => { const r = I.acumulado(k, m12); return r ? UI.pct(r.pct, 2) : '—'; }; out.push(this.kpi('info', 'line-chart', 'Índices 12 meses (Banco Central)', a('inccdi'), `INCC-DI · IPCA ${a('ipca')} · IGP-M ${a('igpm')} · salário mínimo ${UI.money((I.ultimo('salmin') || [0, 0])[1])}`)); } } catch (e) {}
+    return out.join('');
+  },
   kpi(cls, ic, lbl, val, sub, spark) {
     return `<div class="card kpi ${cls}"><div class="ico">${UI.icon(ic)}</div><div class="lbl">${lbl}</div><div class="val">${val}</div><div class="sub">${sub}</div>${spark || ''}</div>`;
   },
@@ -58,6 +70,7 @@ Views.dashboard = {
         ${this.kpi('violet', 'hand-coins', 'A receber', moneyK(g.fin.receitaPendente), g.fin.atrasadoReceber ? `<span style="color:var(--err)">Vencido ${money(g.fin.atrasadoReceber)}</span>` : 'Nada vencido')}
         ${this.kpi(g.pendAtrasadas ? 'err' : '', 'list-checks', 'Pendências abertas', g.pendAbertas, `${g.pendAtrasadas} atrasadas · ${g.entregasPend} entregas pendentes`)}
         ${this.kpi('info', 'clipboard-list', 'OS abertas', g.osAbertas, `Ticket médio ${moneyK(g.ticketMedio)}`)}
+        ${this.maisCards()}
       </div>
       <div class="grid g-2-1 mt">
         <div class="card"><div class="card-h"><h3>Fluxo de caixa – 12 meses</h3><span class="tiny muted">pago/recebido</span></div><div class="card-b"><div class="chart-box"><canvas id="chFluxo"></canvas></div></div></div>

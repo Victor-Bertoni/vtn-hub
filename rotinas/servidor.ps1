@@ -86,7 +86,7 @@ function Pode-Gravar($s, [string]$col, [string]$id, [string]$arq) {
   if ($col -eq 'pedidos') { return ($id -eq $s.id) }
   return ($col -like "pedidos/$($s.id)/*")
 }
-# sessões guardadas neste computador (não vão para o OneDrive): ninguém precisa entrar de novo quando o PC reinicia
+# sessões: ficam em 00_VTN\_servidor (fora do banco) para valer em qualquer servidor; sem essa pasta, neste computador
 $ArqSessoes = Join-Path $env:LOCALAPPDATA 'VTN_Hub\sessoes.json'
 function Gravar-Sessoes {
   try { New-Item -ItemType Directory -Force -Path (Split-Path $ArqSessoes) | Out-Null
@@ -196,8 +196,155 @@ function Atualizar-Programa {
 # com o acesso ao GitHub ligado confere a cada 15 s (quase instantâneo); sem ele, a cada 60 s (limite do GitHub para quem não se identifica)
 $IntervaloAtualizacao = if (Token-GitHub) { 15 } else { 60 }
 
+# =========================================================
+#  SERVIDOR PRINCIPAL E RESERVAS
+#  Qualquer computador com a pasta 00_VTN no OneDrive pode rodar este servidor. Só UM fica ATIVO
+#  (atende a equipe e abre o túnel); os outros ficam de RESERVA, só olhando.
+#  • Quem está ativo: endereco.json no GitHub (ramo consulta), com "sinal de vida" a cada 2 min.
+#  • Ordem: BANCO DE DADOS\sistema\servidores.json (Configurações › Servidores). Sem ordem definida,
+#    vale a ordem em que cada computador entrou (o primeiro é o principal).
+#  • Ativo sumiu (sem sinal há 5 min e sem responder): a reserva assume (a 2ª da fila espera +2 min...).
+#  • O principal voltou e outro está ativo: pede a vez; o ativo para de gravar, marca a troca e
+#    o principal só assume depois que o OneDrive trouxe tudo (nada se perde).
+#  • Cada servidor grava seu estado em BANCO DE DADOS\sistema\servidores\<computador>.json (o app mostra).
+# =========================================================
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$PC = $env:COMPUTERNAME
+$DirServ = Join-Path $Banco 'sistema\servidores'
+$script:ativo = $false; $script:cedendo = $null; $script:desde = Get-Date; $script:ultimoSinal = [datetime]::MinValue
+$script:ultimaDecisao = [datetime]::MinValue; $script:ultimoEstado = [datetime]::MinValue; $script:end = $null; $script:endLidoEm = [datetime]::MinValue
+$script:semGitHub = $false; $script:aguardandoTroca = $null; $script:avisos = @{}
+$VersaoProg = ''; try { $VersaoProg = (Get-Content -Raw (Join-Path $Programa 'versao.json') | ConvertFrom-Json).versao } catch { }
+function Log-UmaVez([string]$chave, [string]$texto, [int]$min = 60) { if (-not $script:avisos[$chave] -or ((Get-Date) - $script:avisos[$chave]).TotalMinutes -ge $min) { $script:avisos[$chave] = Get-Date; Escrever-Log $texto } }
+function Data-Utc($t) { if ($t -is [datetime]) { return $t.ToUniversalTime() }; if (-not $t) { return [datetime]::MinValue }; try { return [datetime]::Parse("$t", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() } catch { return [datetime]::MinValue } }
+function Agora-Utc { return (Get-Date).ToUniversalTime() }
+function OneDrive-Rodando { return [bool](Get-Process OneDrive -ErrorAction SilentlyContinue) }
+function Na-Tomada { try { Add-Type -AssemblyName System.Windows.Forms; return ("$([System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus)" -ne 'Offline') } catch { return $true } }
+function Sessao-Windows { try { return [Diagnostics.Process]::GetCurrentProcess().SessionId } catch { return -1 } }
+# liga o OneDrive se ele estiver fechado (só dá quando há alguém conectado no Windows; antes do login ele liga sozinho ao entrar)
+function Garantir-OneDrive {
+  if (OneDrive-Rodando) { return }
+  if ((Sessao-Windows) -eq 0) { Log-UmaVez 'od0' 'OneDrive parado: o Windows ainda não tem ninguém conectado (ele liga sozinho quando alguém entrar).' 120; return }
+  foreach ($e in @("$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe", "$env:ProgramFiles\Microsoft OneDrive\OneDrive.exe", "${env:ProgramFiles(x86)}\Microsoft OneDrive\OneDrive.exe")) {
+    if (Test-Path $e) { try { Start-Process $e '/background'; Escrever-Log 'OneDrive estava fechado: aberto pelo servidor' } catch { }; return }
+  }
+}
+function Ler-Json([string]$arq) { try { if (Test-Path -LiteralPath $arq) { return (Get-Content -Raw -Encoding UTF8 -LiteralPath $arq | ConvertFrom-Json) } } catch { }; return $null }
+function Gravar-Json([string]$arq, $obj) { New-Item -ItemType Directory -Force -Path (Split-Path $arq) | Out-Null; [IO.File]::WriteAllText($arq, ($obj | ConvertTo-Json -Depth 6 -Compress), $utf8) }
+# fila de servidores: ordem escolhida no app; depois quem entrou primeiro
+function Fila-Servidores {
+  $cfg = Ler-Json (Join-Path $Banco 'sistema\servidores.json')
+  $fora = @(); if ($cfg -and $cfg.desligados) { $fora = @($cfg.desligados) }
+  $reg = @(Get-ChildItem -LiteralPath $DirServ -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '_*' } | ForEach-Object { Ler-Json $_.FullName } | Where-Object { $_ -and $_.pc } | Sort-Object { "$($_.registradoEm)" })
+  $fila = New-Object Collections.ArrayList
+  if ($cfg -and $cfg.ordem) { foreach ($x in @($cfg.ordem)) { if ($x -and -not $fila.Contains("$x")) { [void]$fila.Add("$x") } } }
+  foreach ($r in $reg) { if (-not $fila.Contains("$($r.pc)")) { [void]$fila.Add("$($r.pc)") } }
+  if (-not $fila.Contains($PC)) { [void]$fila.Add($PC) }
+  return @($fila | Where-Object { $fora -notcontains $_ })
+}
+function Minha-Posicao { $f = @(Fila-Servidores); $i = [array]::IndexOf($f, $PC); return $i }   # -1 = desligado como servidor
+# estado deste computador para o app (via OneDrive)
+function Gravar-Estado {
+  $arq = Join-Path $DirServ "$PC.json"; $ant = Ler-Json $arq
+  $reg = if ($ant -and $ant.registradoEm) { "$($ant.registradoEm)" } else { (Agora-Utc).ToString('o') }
+  $papel = if ($script:ativo -and -not $script:cedendo) { 'ativo' } elseif ($script:cedendo) { 'passando a vez' } else { 'reserva' }
+  try { Gravar-Json $arq ([ordered]@{ pc = $PC; usuario = $env:USERNAME; papel = $papel; ativo = [bool]($script:ativo -and -not $script:cedendo); url = $script:urlTunel; vivoEm = (Agora-Utc).ToString('o'); desde = $script:desde.ToUniversalTime().ToString('o'); registradoEm = $reg;
+    versao = $VersaoProg; onedrive = (OneDrive-Rodando); tomada = (Na-Tomada); semLogin = ((Sessao-Windows) -eq 0); github = [bool](Token-GitHub); posicao = (Minha-Posicao) }) } catch { }
+}
+function Campos-Endereco($extra) {
+  $c = @{ url = $script:urlTunel; pc = $PC; versao = $VersaoProg; desde = $script:desde.ToUniversalTime().ToString('o'); onedrive = (OneDrive-Rodando); tomada = (Na-Tomada) }
+  # preserva um pedido de troca feito por outro servidor
+  if ($script:end -and $script:end.pedido -and "$($script:end.pedido.para)" -ne $PC) { $c.pedido = $script:end.pedido }
+  if ($script:cedendo) { $c.cedido = $script:cedendo }
+  if ($extra) { foreach ($k in $extra.Keys) { $c[$k] = $extra[$k] } }
+  return $c
+}
+function Sinal-DeVida {
+  if (-not $script:ativo -or -not $script:urlTunel) { return }
+  try { $c = Campos-Endereco; $script:infoEndereco = $c; if ((Publicar-Endereco $c) -eq 'ok') { $script:ultimoSinal = Agora-Utc } } catch { Log-UmaVez 'sinal' "Aviso: sinal de vida não publicado: $($_.Exception.Message)" }
+}
+function OneDrive-Quieto([int]$seg = 60) {
+  $n = Get-ChildItem -LiteralPath (Join-Path $Banco 'vtn') -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+  return (-not $n -or ((Get-Date).ToUniversalTime() - $n.LastWriteTimeUtc).TotalSeconds -ge $seg)
+}
+function Assumir([string]$motivo) {
+  if ($script:ativo) { return }
+  $script:ativo = $true; $script:cedendo = $null; $script:aguardandoTroca = $null; $script:desde = Get-Date
+  $script:sessoes.Clear(); Ler-Sessoes; $script:cacheUs = $null
+  Escrever-Log "ESTE COMPUTADOR ($PC) ASSUMIU COMO SERVIDOR: $motivo"
+  Iniciar-Tunel; Gravar-Estado
+  # CUB do mês e histórico (o app lê os PDFs sozinho)
+  try { Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot 'cub_mensal.ps1')`"" } catch { }
+}
+function Rebaixar([string]$motivo) {
+  if (-not $script:ativo) { return }
+  $script:ativo = $false; $script:cedendo = $null; Parar-Tunel
+  Escrever-Log "Este computador ($PC) ficou de reserva: $motivo"; Gravar-Estado
+}
+function Ceder([string]$para) {
+  $marca = [guid]::NewGuid().ToString('N')
+  $script:cedendo = [ordered]@{ para = $para; marca = $marca; em = (Agora-Utc).ToString('o') }
+  Start-Sleep -Milliseconds 500
+  Gravar-Json (Join-Path $DirServ '_troca.json') ([ordered]@{ de = $PC; para = $para; marca = $marca; em = (Agora-Utc).ToString('o') })
+  Escrever-Log "Passando a vez para $para (parou de gravar; esperando o OneDrive levar tudo)"
+  Sinal-DeVida
+}
+# decide a cada 30 s (e logo ao ligar)
+function Decidir-Papel {
+  $tok = Token-GitHub
+  if (-not $tok) {   # sem GitHub não há como combinar com outros servidores: funciona sozinho, como antes
+    if (-not $script:ativo) { Log-UmaVez 'semtok' 'Sem token do GitHub: este computador trabalha sozinho (sem reserva).' 1440; Assumir 'sem GitHub para combinar com reservas' }
+    return
+  }
+  $e = Ler-Endereco
+  if ($null -eq $e) {   # sem internet / GitHub fora: quem está ativo continua; reserva espera
+    Log-UmaVez 'semnet' 'Aviso: não consegui ler o endereço no GitHub (sem internet?)' 30
+    if (-not $script:ativo -and $script:end -eq $null -and ((Get-Date) - $script:desde).TotalMinutes -ge 10 -and (Minha-Posicao) -eq 0) { Assumir 'GitHub fora há 10 min e este é o principal' }
+    return
+  }
+  $script:end = $e
+  $vivo = Data-Utc $e.vivoEm; if ($vivo -eq [datetime]::MinValue) { $vivo = Data-Utc $e.em }
+  $minSemSinal = ((Agora-Utc) - $vivo).TotalMinutes
+  $outro = ("$($e.pc)" -and "$($e.pc)" -ne $PC)
+  $pos = Minha-Posicao
+  if ($script:ativo) {
+    $passouPraMim = ($e.cedido -and "$($e.cedido.para)" -eq $PC)
+    if ($outro -and -not $passouPraMim -and $minSemSinal -lt 5 -and $vivo -gt $script:ultimoSinal) { Rebaixar "o servidor $($e.pc) está ativo"; return }
+    if (-not $script:cedendo -and $e.pedido -and "$($e.pedido.para)" -ne $PC -and ((Agora-Utc) - (Data-Utc $e.pedido.em)).TotalMinutes -lt 10) { Ceder "$($e.pedido.para)"; return }
+    if ($script:cedendo -and ((Agora-Utc) - (Data-Utc $script:cedendo.em)).TotalMinutes -ge 15) { Escrever-Log "A troca com $($script:cedendo.para) não aconteceu em 15 min; continuo ativo"; $script:cedendo = $null; Sinal-DeVida }
+    return
+  }
+  if ($pos -lt 0) { return }   # desligado como servidor nas Configurações
+  if (-not $outro -and "$($e.pc)" -eq $PC) { Assumir 'o endereço publicado é deste computador (voltou)'; return }
+  $semNinguem = (-not "$($e.pc)") -or (-not "$($e.url)") -or ($minSemSinal -ge 5)
+  if ($semNinguem) {
+    $espera = 5 + 2 * $pos
+    if ($minSemSinal -ge $espera -or -not "$($e.pc)") {
+      if (-not (OneDrive-Quieto 60)) { Log-UmaVez 'quieto' 'Esperando o OneDrive terminar de sincronizar para assumir' 10; return }
+      Assumir $(if ("$($e.pc)") { "o servidor $($e.pc) está sem sinal há $([int]$minSemSinal) min" } else { 'nenhum servidor estava ativo' })
+    }
+    return
+  }
+  if ($pos -eq 0) {   # este é o principal e outro está ativo: pede a vez
+    if ($e.cedido -and "$($e.cedido.para)" -eq $PC) {
+      $t = Ler-Json (Join-Path $DirServ '_troca.json')
+      if ($t -and "$($t.marca)" -eq "$($e.cedido.marca)" -and (OneDrive-Quieto 60)) { Assumir "$($e.pc) passou a vez e o OneDrive já trouxe tudo"; Sinal-DeVida }
+      else { Log-UmaVez 'troca' "Esperando o OneDrive trazer as últimas alterações de $($e.pc)" 10 }
+      return
+    }
+    if (-not $e.pedido -or "$($e.pedido.para)" -ne $PC -or ((Agora-Utc) - (Data-Utc $e.pedido.em)).TotalMinutes -ge 10) {
+      try { $c = @{}; foreach ($p in $e.PSObject.Properties) { $c[$p.Name] = $p.Value }; $c.pedido = [ordered]@{ para = $PC; em = (Agora-Utc).ToString('o') }
+        $script:infoEndereco = $c; if ((Publicar-Endereco $c) -eq 'ok') { Escrever-Log "Principal de volta: pedindo a vez para $($e.pc)" } } catch { }
+    }
+  }
+}
+
+Usar-PastaCompartilhada
+Colocar-Instalador
+if ((Sessao-Windows) -ne 0) { Migrar-Protegidos }   # deixa o token/chaves legíveis também quando o Windows liga sem ninguém entrar
 Atualizar-Programa
 Ler-Sessoes
+Garantir-OneDrive
 # "+" aceita outros nomes além de localhost (precisa da liberação feita pelo instalar_rotinas.ps1); o túnel já chega como localhost
 $l = New-Object Net.HttpListener
 $l.Prefixes.Add("http://+:$Porta/")
@@ -206,8 +353,8 @@ try { $l.Start() } catch {
   try { $l.Start(); Escrever-Log "Aviso: servidor só em localhost (rode instalar_rotinas.ps1 de novo para liberar o acesso pela internet)." }
   catch { Escrever-Log "Servidor já está rodando ou a porta $Porta está ocupada."; exit }
 }
-Escrever-Log "Servidor do VTN Hub ligado em http://localhost:$Porta (banco: $Banco)"
-Iniciar-Tunel
+Escrever-Log "Servidor do VTN Hub ligado em http://localhost:$Porta (banco: $Banco, computador: $PC)"
+Gravar-Estado; Compartilhar-Token; Decidir-Papel
 
 while ($l.IsListening) {
   $tarefa = $l.GetContextAsync()
@@ -215,11 +362,15 @@ while ($l.IsListening) {
     if (((Get-Date) - $ultimaConferencia).TotalSeconds -ge $IntervaloAtualizacao) { $ultimaConferencia = Get-Date; Atualizar-Programa }   # confere o GitHub a cada 15 s (atualização quase instantânea)
     # túnel: confere a cada 5 s; endereço novo é publicado na hora
     $agora = Get-Date
-    if (($agora - $ultimaVigia).TotalSeconds -ge 5) { $ultimaVigia = $agora; if (Vigiar-Tunel) { $enderecoNovo = $true } }
+    if (($agora - $ultimaVigia).TotalSeconds -ge 5) { $ultimaVigia = $agora; if ($script:ativo -and (Vigiar-Tunel)) { $enderecoNovo = $true } }
+    if (($agora - $script:ultimaDecisao).TotalSeconds -ge 30) { $script:ultimaDecisao = $agora; try { Decidir-Papel } catch { Log-UmaVez 'dec' "Aviso: $($_.Exception.Message)" } }
+    if (($agora - $script:ultimoEstado).TotalSeconds -ge 120) { $script:ultimoEstado = $agora; Gravar-Estado; Garantir-OneDrive; if ($script:ativo -and -not $enderecoNovo) { Sinal-DeVida } }
+    if (-not $script:ativo) { continue }
     # cópia de consulta: 2 min depois da última alteração (no máximo a cada 5 min) e, de todo jeito, a cada 6 h
     if ($enderecoNovo -or (($copiaPendente -or $ultimaGravacao -gt $ultimoEnvio) -and ($agora - $ultimaGravacao).TotalMinutes -ge 2 -and ($agora - $ultimoEnvio).TotalMinutes -ge 5) -or ($agora - $ultimoEnvio).TotalHours -ge 6) {
       $ultimoEnvio = $agora; $enderecoNovo = $false
-      try { $r = Publicar-Copia $Banco (Usuarios) $Repo $script:urlTunel; if ($r -eq 'ok') { $copiaPendente = $false; Escrever-Log 'Cópia de consulta e endereço publicados no GitHub' } }
+      if (-not $script:urlTunel) { continue }
+      try { $script:infoEndereco = Campos-Endereco; $r = Publicar-Copia $Banco (Usuarios) $Repo $script:urlTunel; if ($r -eq 'ok') { $copiaPendente = $false; $script:ultimoSinal = Agora-Utc; Escrever-Log 'Cópia de consulta e endereço publicados no GitHub' } }
       catch { Escrever-Log "Aviso: cópia de consulta não publicada: $($_.Exception.Message)" }
     }
   }
@@ -232,7 +383,12 @@ while ($l.IsListening) {
       $ctx.Response.Headers['Access-Control-Max-Age'] = '600'
       Responder $ctx 204 'text/plain' $null; continue
     }
-    if ($rota -eq '/api/info') { Json $ctx @{ ok = $true; pasta = (Split-Path $Banco -Leaf) }; continue }
+    $atende = ($script:ativo -and -not $script:cedendo)
+    if ($rota -eq '/api/info') { Json $ctx @{ ok = $true; pasta = (Split-Path $Banco -Leaf); ativo = $atende; pc = $PC; versao = $VersaoProg; desde = $script:desde.ToUniversalTime().ToString('o') }; continue }
+    if ($rota -like '/api/*' -and -not $atende) {   # reserva (ou passando a vez): não grava nada; o app procura o servidor ativo
+      $qual = if ($script:end) { "$($script:end.pc)" } else { '' }
+      Json $ctx @{ erro = 'reserva'; pc = $PC; ativo = $qual; url = $(if ($script:end) { "$($script:end.url)" } else { '' }) } 503; continue
+    }
     if ($rota -eq '/api/login' -and $req.HttpMethod -eq 'POST') {
       $c = $utf8.GetString((Ler-Corpo $req)) | ConvertFrom-Json
       $u = Usuarios | Where-Object { "$($_.email)".ToLower() -eq "$($c.email)".Trim().ToLower() -and $_.ativo -ne $false } | Select-Object -First 1

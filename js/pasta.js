@@ -83,18 +83,27 @@
     const n = L.length - resto.length; if (n) setTimeout(() => { try { UI.toast(n + ' pedido(s) feitos com o computador desligado foram enviados aos administradores'); } catch (e) {} }, 4000);
   }
   function faixaCopia() {
-    const quando = copia && copia.geradoEm ? new Date(copia.geradoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '?';
+    const quando = () => copia && copia.geradoEm ? new Date(copia.geradoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '?';
     const f = document.createElement('div'); f.id = 'faixaCopia';
     f.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;background:#f59e0b;color:#1c1917;font:600 12px/1.35 Inter,system-ui,sans-serif;padding:6px 12px;text-align:center';
-    f.innerHTML = `Modo consulta: o computador do Victor está desligado. Dados de <b>${quando}</b>. Alterações viram pedidos e são enviadas quando ele ligar. <a href="#" id="fcTenta" style="color:#1c1917">Tentar conectar</a>`;
-    document.body.appendChild(f); document.body.style.paddingTop = f.offsetHeight + 'px';
-    f.querySelector('#fcTenta').onclick = e => { e.preventDefault(); location.reload(); };
-    setInterval(async () => {   // servidor voltou? avisa
-      try { if ((await acharServidor()) !== null) { if (!document.querySelector('.modal-bg')) { location.reload(); return; } f.style.background = '#22c55e'; f.innerHTML = 'O computador do Victor voltou. <a href="#" style="color:#052e16" onclick="location.reload();return false">Toque para atualizar</a>'; } } catch (e) {}
-    }, 120000);
+    const pintar = () => { const st = situacaoServidor(); f.style.background = st.cor; f.innerHTML = `<b>Modo consulta</b> (dados de <b>${quando()}</b>). ${st.txt} Alterações viram pedidos e são enviadas quando o servidor voltar. <a href="#" id="fcTenta" style="color:#1c1917">Tentar agora</a>`; f.querySelector('#fcTenta').onclick = e => { e.preventDefault(); tentar(true); }; document.body.style.paddingTop = f.offsetHeight + 'px'; };
+    document.body.appendChild(f); pintar();
+    let tentando = false;
+    async function tentar(forcar) {   // servidor voltou? entra sozinho
+      if (tentando) return; tentando = true;
+      try {
+        if ((await acharServidor(forcar)) !== null) {
+          if (!document.querySelector('.modal-bg')) { location.reload(); return; }
+          f.style.background = '#22c55e'; f.innerHTML = `O servidor${infoSrv && infoSrv.pc ? ' <b>' + infoSrv.pc + '</b>' : ''} voltou. <a href="#" style="color:#052e16" onclick="location.reload();return false">Toque para atualizar</a>`; return;
+        }
+        pintar();
+      } catch (e) {} finally { tentando = false; }
+    }
+    setInterval(() => { if (!document.hidden) tentar(false); }, 20000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tentar(true); });
   }
   function telaCopia(msg) {
-    const el = tela(`<h2 style="margin:6px 0">Modo consulta</h2><p style="color:#475569;font-size:14px">O computador do Victor está desligado ou sem internet. Entre com seu e-mail e senha do VTN Hub para ver a última cópia dos dados.</p>${msg ? `<p style="color:#b91c1c;font-size:13px">${msg}</p>` : ''}
+    const el = tela(`<h2 style="margin:6px 0">Modo consulta</h2><p style="color:#475569;font-size:14px">${situacaoServidor().txt}</p><p style="color:#475569;font-size:14px">Entre com seu e-mail e senha do VTN Hub para ver a última cópia dos dados. Quando o servidor voltar, o app sai da cópia sozinho.</p>${msg ? `<p style="color:#b91c1c;font-size:13px">${msg}</p>` : ''}
       <form id="cpF" style="display:grid;gap:10px"><input id="cpE" type="email" placeholder="E-mail" required autocomplete="username" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
       <input id="cpS" type="password" placeholder="Senha" required autocomplete="current-password" style="padding:11px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px">
       <button id="cpOk" type="submit" style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px;font-weight:700;cursor:pointer">Abrir cópia</button></form>
@@ -120,32 +129,84 @@
   let BASE = '';
   const ENDERECO_API = 'https://api.github.com/repos/Victor-Bertoni/vtn-hub/contents/endereco.json?ref=consulta';
   const ENDERECO_RAW = 'https://raw.githubusercontent.com/Victor-Bertoni/vtn-hub/consulta/endereco.json';
+  let infoSrv = null;    // /api/info do servidor em uso { pc, versao, desde, ativo }
+  let infoEnd = null;    // endereco.json publicado { url, vivoEm, pc, versao, onedrive, tomada }
+  let endLidoEm = 0, endPelaApi = false;
   async function testarServidor(u) {
     const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
-    try { const r = await fetch(u + 'api/info', { cache: 'no-store', signal: c.signal }); return r.ok && !!(await r.json()).ok; } catch (e) { return false; } finally { clearTimeout(t); }
+    try { const r = await fetch(u + 'api/info', { cache: 'no-store', signal: c.signal }); if (!r.ok) return false; const j = await r.json(); if (!j.ok || j.ativo === false) return false; infoSrv = j; return true; } catch (e) { return false; } finally { clearTimeout(t); }
   }
-  async function enderecoPublicado() {
-    try { const r = await fetch(ENDERECO_API, { cache: 'no-store', headers: { Accept: 'application/vnd.github.raw+json' } }); if (r.ok) return (await r.json()).url || ''; } catch (e) {}
-    try { const r = await fetch(ENDERECO_RAW + '?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) return (await r.json()).url || ''; } catch (e) {}
-    return '';
+  // lê o endereço publicado (alterna a API do GitHub e o raw para não estourar o limite de consultas)
+  async function enderecoPublicado(forcar) {
+    if (!forcar && infoEnd && Date.now() - endLidoEm < 55000) return infoEnd.url || '';
+    const ordem = endPelaApi ? ['raw', 'api'] : ['api', 'raw']; endPelaApi = !endPelaApi;
+    for (const via of ordem) {
+      try {
+        const r = via === 'api' ? await fetch(ENDERECO_API, { cache: 'no-store', headers: { Accept: 'application/vnd.github.raw+json' } }) : await fetch(ENDERECO_RAW + '?t=' + Date.now(), { cache: 'no-store' });
+        if (r.ok) { infoEnd = await r.json(); endLidoEm = Date.now(); return infoEnd.url || ''; }
+      } catch (e) {}
+    }
+    return infoEnd ? (infoEnd.url || '') : '';
   }
-  async function acharServidor() {
+  async function acharServidor(forcar) {
     if (await testarServidor('')) return '';
     let ult = ''; try { ult = localStorage.getItem('vtn_srv_url') || ''; } catch (e) {}
     if (ult && await testarServidor(ult)) return ult;
-    const pub = await enderecoPublicado();
+    const pub = await enderecoPublicado(forcar);
     if (pub && pub !== ult && await testarServidor(pub)) { try { localStorage.setItem('vtn_srv_url', pub); } catch (e) {} return pub; }
     return null;
   }
+  // texto para a equipe: o servidor está ligado? qual computador? desde quando?
+  const haQuanto = iso => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); if (!(m >= 0)) return ''; if (m < 1) return 'agora há pouco'; if (m < 60) return 'há ' + m + ' min'; const h = Math.round(m / 60); if (h < 48) return 'há ' + h + ' h'; return 'há ' + Math.round(h / 24) + ' dias'; };
+  function situacaoServidor() {
+    const e = infoEnd; if (!e) return { cor: '#f59e0b', txt: 'Não consegui consultar onde está o servidor (sem internet?).' };
+    const pc = e.pc ? `o servidor <b>${e.pc}</b>` : 'o servidor';
+    const sinal = e.vivoEm || e.em; const min = sinal ? (Date.now() - new Date(sinal).getTime()) / 60000 : 1e9;
+    if (!e.url) return { cor: '#f59e0b', txt: `Nenhum computador está servindo agora (último sinal de ${pc} ${haQuanto(sinal) || '?'}).` };
+    if (min >= 6) return { cor: '#f59e0b', txt: `${pc[0].toUpperCase() + pc.slice(1)} deu o último sinal ${haQuanto(sinal)}: está desligado, dormindo (tampa fechada / suspensão) ou sem internet. Se houver servidor reserva, ele assume sozinho em poucos minutos.` };
+    return { cor: '#fbbf24', txt: `${pc[0].toUpperCase() + pc.slice(1)} está ligado (sinal ${haQuanto(sinal)}), mas ainda não respondeu a este aparelho. Tentando de novo a cada 20 s…` };
+  }
   let token = ''; try { token = localStorage.getItem(LST) || ''; } catch (e) {}
   let expirou = false;
-  const api = async (rota, opc = {}) => {
-    const r = await fetch(BASE + 'api/' + rota, Object.assign({ cache: 'no-store' }, opc, { headers: Object.assign({ 'X-VTN-Token': token }, opc.headers || {}) }));
+  // servidor caiu ou virou reserva no meio do uso: procura o servidor ativo (outro computador) e continua
+  let trocando = null, faixaQueda = null;
+  function avisoQueda(txt, cor) {
+    if (!txt) { if (faixaQueda) { faixaQueda.remove(); faixaQueda = null; document.body.style.paddingTop = ''; } return; }
+    if (!faixaQueda) { faixaQueda = document.createElement('div'); faixaQueda.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;color:#1c1917;font:600 12px/1.35 Inter,system-ui,sans-serif;padding:6px 12px;text-align:center'; document.body.appendChild(faixaQueda); }
+    faixaQueda.style.background = cor || '#fbbf24'; faixaQueda.innerHTML = txt; document.body.style.paddingTop = faixaQueda.offsetHeight + 'px';
+  }
+  function reconectar() {
+    if (trocando) return trocando;
+    trocando = (async () => {
+      const ini = Date.now();
+      avisoQueda('O servidor parou de responder. Procurando o servidor ativo…');
+      while (true) {
+        const achado = await acharServidor(true);
+        if (achado !== null) {
+          const mudou = achado !== BASE; BASE = achado; avisoQueda('');
+          try { if (mudou && window.UI) UI.toast('Conectado ao servidor ' + ((infoSrv && infoSrv.pc) || '')); } catch (e) {}
+          return true;
+        }
+        const st = situacaoServidor();
+        avisoQueda(st.txt + (Date.now() - ini > 90000 ? ' <a href="#" onclick="location.reload();return false" style="color:#1c1917">Abrir a cópia de consulta</a>' : ''), st.cor);
+        await new Promise(r => setTimeout(r, 20000));
+      }
+    })().finally(() => { trocando = null; });
+    return trocando;
+  }
+  const api = async (rota, opc = {}, repetida) => {
+    let r;
+    try { r = await fetch(BASE + 'api/' + rota, Object.assign({ cache: 'no-store' }, opc, { headers: Object.assign({ 'X-VTN-Token': token }, opc.headers || {}) })); }
+    catch (e) { if (modo === 'http' && !repetida) { await reconectar(); return api(rota, opc, true); } throw e; }
+    if (r.status === 503 && modo === 'http' && !repetida) { let j = {}; try { j = await r.clone().json(); } catch (e) {} if (j.erro === 'reserva') { await reconectar(); return api(rota, opc, true); } }
     if (r.status === 401 && modo === 'http' && token && !expirou) { expirou = true; try { localStorage.removeItem(LST); localStorage.removeItem('vtn_session'); } catch (e) {} alert('Sua sessão no VTN Hub expirou. Entre de novo.'); location.reload(); }
     return r;
   };
   const pronto = new Promise(r => { prontoRes = r; });
-  window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, trocar: () => escolher(true), suportado, get servidor() { return modo === 'http'; }, get copia() { return modo === 'copia'; },
+  window.VTN_PASTA = { pronto, get nome() { return nomePasta; }, get base() { return BASE; }, get infoServidor() { return infoSrv; }, get endereco() { return infoEnd; }, situacao: situacaoServidor, haQuanto, async lerEndereco() { await enderecoPublicado(true); return infoEnd; },
+    async put(rota, obj) { const r = await api(rota, { method: 'PUT', body: JSON.stringify(obj) }); let j = {}; try { j = await r.json(); } catch (e) {} if (!r.ok || !j.ok) throw new Error(j.erro || ('HTTP ' + r.status)); return j; },
+    async bin(rota) { const r = await api(rota); if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); },
+    async get(rota) { const r = await api(rota); let j = {}; try { j = await r.json(); } catch (e) {} if (!r.ok) throw new Error(j.erro || ('HTTP ' + r.status)); return j; }, trocar: () => escolher(true), suportado, get servidor() { return modo === 'http'; }, get copia() { return modo === 'copia'; },
     async enviarArquivo(rota, blob) { const r = await api(rota, { method: 'PUT', body: blob }); let j = {}; try { j = await r.json(); } catch (e) {} if (!r.ok || !j.ok) throw new Error(j.erro || ('HTTP ' + r.status)); return j; },
     async enviar(rota, dados) { const r = await api(rota, { method: 'POST', body: JSON.stringify(dados) }); let j = {}; try { j = await r.json(); } catch (e) {} if (!r.ok || !j.ok) throw new Error(j.erro || ('HTTP ' + r.status)); return j; },
     sair() { try { if (modo === 'http') api('sair'); localStorage.removeItem(LST); localStorage.removeItem(DK_LS); } catch (e) {} },
@@ -248,7 +309,8 @@
     } catch (e) {}
     if (/[?&]teste=opfs/.test(location.search) && navigator.storage && navigator.storage.getDirectory) { raiz = await navigator.storage.getDirectory(); nomePasta = 'teste (navegador)'; prontoRes(raiz); return; }   // só para testes automáticos
     if (await abrirCopiaLembrada()) return;
-    telaCopia();   // sem servidor: cópia de consulta (a pasta do OneDrive fica como opção no site do GitHub)
+    telaCopia();
+    const vigia = setInterval(async () => { if (modo !== 'pasta') { clearInterval(vigia); return; } if (document.hidden) return; if ((await acharServidor(false)) !== null && modo === 'pasta') location.reload(); }, 20000);   // sem servidor: cópia de consulta (a pasta do OneDrive fica como opção no site do GitHub)
   }
   async function modoPasta() {
     if (!suportado) { tela(`<h2 style="margin:6px 0">Use o Edge ou o Chrome no computador</h2><p style="color:#475569">O VTN Hub guarda os dados na pasta do OneDrive e precisa do Microsoft Edge ou do Google Chrome no Windows para acessá-la.</p>`); return; }

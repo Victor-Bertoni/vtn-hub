@@ -50,21 +50,29 @@ window.App = (() => {
     ['caixa', 'PCI e PLS CAIXA', 'file-spreadsheet', 'obras.ver'],
     ['os', 'Ordens de serviço', 'clipboard-list', 'os'],
     ['pendencias', 'Pendências e entregas', 'list-checks', 'pendencias'],
+    ['vistorias', 'Vistorias e checklists', 'clipboard-check', 'obras.ver'],
+    ['cronograma', 'Cronograma físico-financeiro', 'calendar-range', 'obras.ver'],
     ['agenda', 'Agenda', 'calendar-heart', 'calendario'],
     ['calendario', 'Calendário e feriados', 'calendar-days', 'calendario'],
     ['Financeiro'],
     ['financeiro', 'Caixa e balanço', 'wallet', 'financeiro.ver'],
+    ['gastos', 'Gastos e painel de caixa', 'pie-chart', 'financeiro.ver'],
+    ['notas', 'Notas fiscais', 'file-text', 'financeiro.ver'],
     ['compras', 'Compras e cotações', 'shopping-cart', 'financeiro.ver'],
+    ['fornecedores', 'Fornecedores', 'truck', 'financeiro.ver'],
     ['impostos', 'Impostos e obrigações', 'landmark', 'financeiro.ver'],
     ['enquadramento', 'Enquadramento ao vivo', 'activity', 'financeiro.ver'],
     ['orcamentos', 'Orçamentos', 'calculator', 'orcamentos'],
     ['propostas', 'Propostas comerciais', 'send', 'contratos'],
     ['contratos', 'Contratos, termos e recibos', 'file-signature', 'contratos'],
     ['funil', 'Funil comercial', 'filter', 'contratos'],
+    ['reajuste', 'Reajuste de contrato', 'trending-up', 'contratos'],
     ['composicoes', 'Composições e CUB', 'layers', 'orcamentos'],
     ['relatorios', 'Central de relatórios', 'file-bar-chart', 'relatorios'],
     ['Pessoas'],
     ['pessoas', 'Clientes e equipe', 'users', 'pessoas'],
+    ['rh', 'Equipe e RH (ponto e holerite)', 'id-card', 'pessoas'],
+    ['ponto', 'Bater ponto', 'fingerprint', 'obras.ver'],
     ['chat', 'Chat e grupos', 'messages-square', 'chat'],
     ['Conhecimento'],
     ['conhecimento', 'Central de conhecimento', 'graduation-cap', 'dashboard'],
@@ -89,6 +97,7 @@ window.App = (() => {
         <button class="btn ghost icon menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">${icon('menu')}</button>
         <div class="search">${icon('search')}<input id="gsearch" placeholder="Buscar obra, pessoa, ID (ex.: OS-0001), arquivo…" autocomplete="off"><div class="search-results" id="gresults"></div></div>
         <div class="top-actions">
+          <a id="srvChip" class="enq-chip" href="#/config" style="display:none"></a>
           <a id="enqChip" class="enq-chip" href="#/enquadramento"></a>
           ${window.Cloud && Cloud.ativo && (Auth.current() || {}).papel !== 'admin' ? `<button class="btn sm keep" id="sugBtn" title="Sugerir uma mudança aos administradores">${icon('lightbulb')} Sugerir</button>` : ''}
           <button class="btn sm" id="quickAdd">${icon('plus')} Novo</button>
@@ -98,7 +107,7 @@ window.App = (() => {
       <section class="view" id="view"></section>
     </div>`;
     bindSearch();
-    $('#quickAdd').onclick = quickAdd; if ($('#sugBtn')) $('#sugBtn').onclick = () => Cloud.sugerir();
+    $('#quickAdd').onclick = quickAdd; if ($('#sugBtn')) $('#sugBtn').onclick = () => Cloud.sugerir(); try { window.Servidores && Servidores.iniciarChip(); } catch (e) {}
     UI.icons();
   }
 

@@ -23,12 +23,54 @@ $IterCopia = 600000
 $utf8sb = New-Object Text.UTF8Encoding $false
 
 function Bytes-Aleatorios([int]$n) { $b = New-Object byte[] $n; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); return ,$b }
-function Protegido-Ler([string]$arq) { if (-not (Test-Path $arq)) { return $null }; return ,[Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes($arq), $null, 'CurrentUser') }
-function Protegido-Gravar([string]$arq, [byte[]]$b) { [IO.File]::WriteAllBytes($arq, [Security.Cryptography.ProtectedData]::Protect($b, $null, 'CurrentUser')) }
+# Protegido pelo Windows (DPAPI). Grava no escopo do computador (LocalMachine): assim o servidor
+# também lê quando liga antes de alguém entrar no Windows. Lê os dois escopos (arquivos antigos eram CurrentUser).
+function Protegido-Ler([string]$arq) {
+  if (-not (Test-Path $arq)) { return $null }
+  $b = [IO.File]::ReadAllBytes($arq)
+  foreach ($esc in @('LocalMachine', 'CurrentUser')) { try { return ,[Security.Cryptography.ProtectedData]::Unprotect($b, $null, $esc) } catch { } }
+  return $null
+}
+function Protegido-Gravar([string]$arq, [byte[]]$b) { [IO.File]::WriteAllBytes($arq, [Security.Cryptography.ProtectedData]::Protect($b, $null, 'LocalMachine')) }
 
+# ---------- pasta compartilhada dos servidores: OneDrive\00_VTN\_servidor ----------
+# Fica FORA de "BANCO DE DADOS" (o app não lê essa pasta) e só existe para quem tem a pasta 00_VTN no OneDrive
+# (Victor e Ismael). Guarda o que um servidor reserva precisa para assumir sem pedir nada a ninguém:
+# sessões (ninguém precisa entrar de novo), chaves da cópia de consulta e o token do GitHub (embrulhados).
+$DirComp = Join-Path (Split-Path $Banco -Parent) '_servidor'
+$ArqSegredos = Join-Path $DirComp 'segredos.json'
+function Comp-Ok { return (Test-Path -LiteralPath (Split-Path $Banco -Parent)) }
+function Chave-Embrulho { $s = [Security.Cryptography.SHA256]::Create(); $a = $s.ComputeHash($utf8sb.GetBytes('VTN-Hub/servidor/a/' + $Repo)); $b = $s.ComputeHash($utf8sb.GetBytes('VTN-Hub/servidor/b/' + $Repo)); return ,[byte[]]($a + $b) }
+function Embrulhar([byte[]]$b) { return (Cifrar (Chave-Embrulho) $b) }
+function Desembrulhar($c) {
+  try {
+    $k = Chave-Embrulho; $iv = [Convert]::FromBase64String($c.iv); $ct = [Convert]::FromBase64String($c.ct)
+    $h = [Security.Cryptography.HMACSHA256]::new([byte[]]$k[32..63])
+    if ([Convert]::ToBase64String($h.ComputeHash([byte[]]($iv + $ct))) -ne $c.mac) { return $null }
+    $aes = [Security.Cryptography.Aes]::Create(); $aes.Mode = 'CBC'; $aes.Padding = 'PKCS7'; $aes.Key = [byte[]]$k[0..31]; $aes.IV = $iv
+    return ,$aes.CreateDecryptor().TransformFinalBlock($ct, 0, $ct.Length)
+  } catch { return $null }
+}
+function Ler-Segredos { $o = @{}; if (Test-Path -LiteralPath $ArqSegredos) { try { (Get-Content -Raw -Encoding UTF8 -LiteralPath $ArqSegredos | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $o[$_.Name] = $_.Value } } catch { } }; return $o }
+function Segredo-Compartilhado([string]$nome) { $s = Ler-Segredos; if ($s[$nome]) { return ,(Desembrulhar $s[$nome]) }; return $null }
+# grava/atualiza um segredo na pasta compartilhada (só acrescenta ou troca o próprio item)
+function Compartilhar-Segredo([string]$nome, [byte[]]$b) {
+  if (-not $b -or -not (Comp-Ok)) { return }
+  try {
+    New-Item -ItemType Directory -Force -Path $DirComp | Out-Null
+    $s = Ler-Segredos; $atual = if ($s[$nome]) { Desembrulhar $s[$nome] } else { $null }
+    if ($atual -and ([Convert]::ToBase64String($atual) -eq [Convert]::ToBase64String($b))) { return }
+    $s[$nome] = Embrulhar $b
+    [IO.File]::WriteAllText($ArqSegredos, ($s | ConvertTo-Json -Depth 4 -Compress), $utf8sb)
+  } catch { }
+}
+
+# chave dos dados da cópia de consulta: a mesma em todos os servidores (quem já entrou abre a cópia de qualquer um)
 function Chave-Dados {
   $k = Protegido-Ler $ArqChave
+  if (-not $k) { $k = Segredo-Compartilhado 'chave'; if ($k) { Protegido-Gravar $ArqChave $k } }
   if (-not $k) { $k = Bytes-Aleatorios 64; Protegido-Gravar $ArqChave $k }
+  Compartilhar-Segredo 'chave' $k
   return ,$k
 }
 function Derivar([string]$senha, [byte[]]$salt) {
@@ -102,7 +144,69 @@ function Usuarios-Ativos {
   Get-ChildItem -LiteralPath (Join-Path $Banco 'vtn') -Filter 'usuarios__*.json' -ErrorAction SilentlyContinue | ForEach-Object { foreach ($x in ((Get-Content -Raw -Encoding UTF8 $_.FullName | ConvertFrom-Json).json | ConvertFrom-Json)) { $us += $x } }
   return $us
 }
-function Token-GitHub { $b = Protegido-Ler $ArqToken; if ($b) { return $utf8sb.GetString($b) } else { return $null } }
+function Token-GitHub {
+  $b = Protegido-Ler $ArqToken
+  if (-not $b) { $b = Segredo-Compartilhado 'github'; if ($b) { try { Protegido-Gravar $ArqToken $b } catch { } } }   # computador novo: usa o token que já está na pasta compartilhada
+  if ($b) { return $utf8sb.GetString($b) } else { return $null }
+}
+function Compartilhar-Token { $b = Protegido-Ler $ArqToken; if ($b) { Compartilhar-Segredo 'github' $b } }
+
+# arquivos que todos os servidores usam juntos (passam para a pasta compartilhada; a cópia local antiga fica como está)
+function Usar-PastaCompartilhada {
+  if (-not (Comp-Ok)) { return }
+  New-Item -ItemType Directory -Force -Path $DirComp | Out-Null
+  foreach ($par in @(@('ArqChavesUs', 'chaves_usuarios.json'), @('ArqSessoes', 'sessoes.json'), @('ArqSenhasAdmin', 'senhas_admin.json'))) {
+    $v = Get-Variable -Name $par[0] -Scope Script -ErrorAction SilentlyContinue; if (-not $v) { continue }
+    $novo = Join-Path $DirComp $par[1]
+    if ((Test-Path -LiteralPath $v.Value) -and $v.Value -ne $novo) {
+      if (-not (Test-Path -LiteralPath $novo)) { Copy-Item -LiteralPath $v.Value -Destination $novo }
+      else {   # junta: acrescenta o que só existe aqui (nunca tira nada do arquivo compartilhado)
+        try {
+          $a = Get-Content -Raw -Encoding UTF8 -LiteralPath $novo | ConvertFrom-Json; $b = Get-Content -Raw -Encoding UTF8 -LiteralPath $v.Value | ConvertFrom-Json; $mudou = $false
+          foreach ($p in $b.PSObject.Properties) { if (-not ($a.PSObject.Properties.Name -contains $p.Name)) { $a | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value; $mudou = $true } }
+          if ($mudou) { [IO.File]::WriteAllText($novo, ($a | ConvertTo-Json -Depth 6 -Compress), $utf8sb) }
+        } catch { }
+      }
+    }
+    Set-Variable -Name $par[0] -Scope Script -Value $novo
+  }
+}
+
+# ---------- endereço do servidor ativo (ramo "consulta", endereco.json) ----------
+# { url, em, vivoEm, pc, versao, pedido{para,em}, cedido{para,marca,em} }  — o app lê para achar o servidor
+#   e para dizer à equipe se ele está ligado; os servidores reserva leem para saber quem está ativo.
+$script:infoEndereco = @{}
+function Cabecalho-GitHub([string]$tok) { return @{ Authorization = "Bearer $tok"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'VTN-Hub-servidor'; 'X-GitHub-Api-Version' = '2022-11-28' } }
+function Ler-Endereco {
+  $tok = Token-GitHub; if (-not $tok) { return $null }
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $h = Cabecalho-GitHub $tok; $h.Accept = 'application/vnd.github.raw+json'; $h['Cache-Control'] = 'no-cache'
+    $r = Invoke-WebRequest -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/contents/endereco.json?ref=consulta" -Headers $h -TimeoutSec 20
+    return ($utf8sb.GetString($r.RawContentStream.ToArray()) | ConvertFrom-Json)
+  } catch { if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { return [pscustomobject]@{ url = '' } }; return $null }
+}
+function Montar-Endereco($campos) {
+  $o = [ordered]@{ url = ''; em = (Get-Date).ToUniversalTime().ToString('o'); vivoEm = (Get-Date).ToUniversalTime().ToString('o'); pc = $env:COMPUTERNAME }
+  foreach ($k in $campos.Keys) { $o[$k] = $campos[$k] }
+  return ($o | ConvertTo-Json -Depth 4 -Compress)
+}
+# troca só o endereco.json (mantém a cópia dados.json que já está lá). Um commit só, substituído a cada envio.
+function Publicar-Endereco($campos) {
+  $tok = Token-GitHub; if (-not $tok) { return 'sem token' }
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $h = Cabecalho-GitHub $tok
+  $api = "https://api.github.com/repos/$Repo/git"
+  function Postar2($url, $obj, $metodo = 'POST') { Invoke-RestMethod -Method $metodo -Uri $url -Headers $h -ContentType 'application/json; charset=utf-8' -Body $utf8sb.GetBytes(($obj | ConvertTo-Json -Depth 6 -Compress)) -TimeoutSec 30 }
+  $base = $null; try { $ref = Invoke-RestMethod -Uri "$api/ref/heads/consulta" -Headers $h -TimeoutSec 20; $base = (Invoke-RestMethod -Uri "$api/commits/$($ref.object.sha)" -Headers $h -TimeoutSec 20).tree.sha } catch { }
+  $end = Montar-Endereco $campos
+  $blob = Postar2 "$api/blobs" @{ content = [Convert]::ToBase64String($utf8sb.GetBytes($end)); encoding = 'base64' }
+  $t = @{ tree = @(@{ path = 'endereco.json'; mode = '100644'; type = 'blob'; sha = $blob.sha }) }; if ($base) { $t.base_tree = $base }
+  $tree = Postar2 "$api/trees" $t
+  $com = Postar2 "$api/commits" @{ message = 'Endereço do servidor'; tree = $tree.sha; parents = @() }
+  try { Postar2 "$api/refs/heads/consulta" @{ sha = $com.sha; force = $true } 'PATCH' | Out-Null } catch { Postar2 "$api/refs" @{ ref = 'refs/heads/consulta'; sha = $com.sha } | Out-Null }
+  return 'ok'
+}
 
 function Publicar-Copia([string]$banco, $usuariosAtivos, [string]$repo, [string]$endereco = '') {
   $tok = Token-GitHub; if (-not $tok) { return 'sem token' }
@@ -112,9 +216,11 @@ function Publicar-Copia([string]$banco, $usuariosAtivos, [string]$repo, [string]
   $api = "https://api.github.com/repos/$repo/git"
   function Postar($url, $obj, $metodo = 'POST') { Invoke-RestMethod -Method $metodo -Uri $url -Headers $h -ContentType 'application/json; charset=utf-8' -Body $utf8sb.GetBytes(($obj | ConvertTo-Json -Depth 5 -Compress)) -TimeoutSec 60 }
   $blob = Postar "$api/blobs" @{ content = [Convert]::ToBase64String($utf8sb.GetBytes($json)); encoding = 'base64' }
-  # endereço atual do túnel (para o app achar o PC); vazio = PC sem túnel agora
+  # endereço atual do túnel (para o app achar o PC) + sinal de vida; campos extras vêm do servidor ($script:infoEndereco)
   if (-not $endereco) { $ae = Join-Path $DirLocal 'endereco.txt'; if (Test-Path $ae) { $endereco = (Get-Content -Raw $ae).Trim() } }
-  $end = (@{ url = $endereco; em = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json -Compress)
+  $campos = @{}; if ($script:infoEndereco) { foreach ($k in $script:infoEndereco.Keys) { $campos[$k] = $script:infoEndereco[$k] } }
+  $campos.url = $endereco
+  $end = Montar-Endereco $campos
   $blob2 = Postar "$api/blobs" @{ content = [Convert]::ToBase64String($utf8sb.GetBytes($end)); encoding = 'base64' }
   $tree = Postar "$api/trees" @{ tree = @(@{ path = 'dados.json'; mode = '100644'; type = 'blob'; sha = $blob.sha }, @{ path = 'endereco.json'; mode = '100644'; type = 'blob'; sha = $blob2.sha }) }
   $com = Postar "$api/commits" @{ message = 'Cópia de consulta (criptografada)'; tree = $tree.sha; parents = @() }
@@ -122,3 +228,22 @@ function Publicar-Copia([string]$banco, $usuariosAtivos, [string]$repo, [string]
   catch { Postar "$api/refs" @{ ref = 'refs/heads/consulta'; sha = $com.sha } | Out-Null }
   return 'ok'
 }
+
+# coloca o instalador de servidor na pasta compartilhada (00_VTN\_servidor): outro computador vira servidor com dois cliques
+function Colocar-Instalador {
+  if (-not (Comp-Ok)) { return }
+  try {
+    $orig = Join-Path $PSScriptRoot 'instalar_servidor.cmd'; if (-not (Test-Path $orig)) { return }
+    New-Item -ItemType Directory -Force -Path $DirComp | Out-Null
+    $dest = Join-Path $DirComp 'INSTALAR SERVIDOR VTN HUB.cmd'
+    if (-not (Test-Path -LiteralPath $dest) -or ([IO.File]::ReadAllText($dest) -ne [IO.File]::ReadAllText($orig))) { Copy-Item -LiteralPath $orig -Destination $dest -Force }
+  } catch { }
+}
+# arquivos protegidos antigos (só deste usuário) passam a valer também antes do login no Windows
+function Migrar-Protegidos {
+  Get-ChildItem -LiteralPath $DirLocal -Filter '*.bin' -ErrorAction SilentlyContinue | ForEach-Object {
+    try { $b = [IO.File]::ReadAllBytes($_.FullName); try { [void][Security.Cryptography.ProtectedData]::Unprotect($b, $null, 'LocalMachine'); return } catch { }
+      $p = [Security.Cryptography.ProtectedData]::Unprotect($b, $null, 'CurrentUser'); Copy-Item -LiteralPath $_.FullName -Destination ($_.FullName + '.usuario') -Force; Protegido-Gravar $_.FullName $p } catch { }
+  }
+}
+

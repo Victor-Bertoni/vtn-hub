@@ -26,7 +26,7 @@ Views.pendencias = {
     return UI.table([{ h: '', f: p => `<input type="checkbox" data-res="${p.id}" ${p.status === 'Resolvida' ? 'checked' : ''} title="Marcar como resolvida">` },
       { h: 'ID', f: p => UI.idLink(p.id) }, { h: 'Pendência', f: p => `<span class="plink" data-goto="${p.id}" style="${p.status === 'Resolvida' ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(p.titulo)}</span>${p.descricao ? `<div class="tiny muted">${esc(p.descricao)}</div>` : ''}` },
       ...(semObra ? [] : [{ h: 'Obra', f: p => UI.idLink(p.obraId) }]), { h: 'Responsável', f: p => UI.pessoa(p.responsavelId) },
-      { h: 'Prioridade', f: p => UI.badge(p.prioridade) }, { h: 'Prazo', f: p => `<span style="${p.status !== 'Resolvida' && p.prazo && p.prazo < t ? 'color:var(--err);font-weight:600' : ''}">${date(p.prazo)}</span>` }, { h: 'Status', f: p => UI.badge(p.status) }],
+      { h: 'Prioridade', f: p => UI.badge(p.prioridade) }, { h: 'Prazo', f: p => `<span style="${p.status !== 'Resolvida' && p.prazo && p.prazo < t ? 'color:var(--err);font-weight:600' : ''}">${date(p.prazo)}</span>` }, { h: 'Status', f: p => UI.badge(p.status) }, { h: 'Comprovação', f: p => window.PendEvid ? PendEvid.selo(p) : '' }],
       l.sort((a, b) => (a.status === 'Resolvida') - (b.status === 'Resolvida') || ord[a.prioridade] - ord[b.prioridade] || (a.prazo || '9').localeCompare(b.prazo || '9')), { emptyMsg: 'Nenhuma pendência. 🎉' });
   },
   tEnt(l, semObra) {
