@@ -402,7 +402,7 @@ Views.funil = {
    Roda sozinho para administrador (no máximo a cada 6 h) e pelo botão em Configurações / Obras.
    ========================================================= */
 window.SincDrive = (() => {
-  const RAIZES = ['00_SERVIÇOS', '01_CONTABILIDADE', '02_PROSPECÇÃO', '03_MODELOS PLANTAS', '04_PLANEJAMENTO', '06_ESTUDOS', '07_DOCUMENTOS GERAIS', '09 - PREFEITURAS', '10 - LICITAÇÕES', '11 - COTAÇÕES'];
+  const RAIZES = ['HUB', '00_SERVIÇOS', '01_CONTABILIDADE', '02_PROSPECÇÃO', '03_MODELOS PLANTAS', '04_PLANEJAMENTO', '06_ESTUDOS', '07_DOCUMENTOS GERAIS', '09 - PREFEITURAS', '10 - LICITAÇÕES', '11 - COTAÇÕES'];
   // nunca entram no banco (o banco vai cifrado para o GitHub, mas senha e certificado não saem do PC)
   const SENSIVEL = /senha|password|login|\.pfx$|\.p12$|\.cer$|\.key$|certificado digital|cód_ass|cod_ass/i;
   const LIXO = /(^|\/)(~\$|\.~lock|thumbs\.db$|desktop\.ini$|\.ds_store$)|\.(tmp|bak|dwl2?|lck|crdownload|partial)$/i;
@@ -425,18 +425,18 @@ window.SincDrive = (() => {
     db.obras.forEach(o => { if (o.pasta) porPasta[norm(String(o.pasta).split('/').pop())] = o; const n = Drive.numeroDa(o); if (n) (porNum[n] = porNum[n] || []).push(o); });
     const palavras = t => norm(t).split(' ').filter(w => w.length > 3 && !/^(OBRA|PROJETO|PROJETOS|LOTE|CASA|COND|PARQUE|EUROPA|ITABIRITO|CONTAGEM|FINAL|REFORMA|LAUDO|VISTORIA|RESIDENCIA)$/.test(w));
     const obraDaPasta = top => { const p = porPasta[norm(top)]; if (p) return p; const m = /^\s*0*(\d+)\s*-/.exec(top); if (!m) return null;
-      const l = (porNum[+m[1]] || []).filter(o => !o.pasta || /00_SERVI[ÇC]OS$/.test(o.pasta) || norm(String(o.pasta).split('/').pop()) === norm(top)); const pt = palavras(top);
+      const l = (porNum[+m[1]] || []).filter(o => !o.pasta || /(00_SERVI[ÇC]OS|HUB)$/.test(o.pasta) || norm(String(o.pasta).split('/').pop()) === norm(top)); const pt = palavras(top);
       if (l.length === 1) return l[0];
       const comNome = l.find(o => palavras(o.nome).some(w => pt.includes(w))); if (comNome) return comNome;
       // obra antiga sem número/pasta próprios: casa pelo nome (2 palavras em comum), e só se ainda não tiver pasta própria
-      return db.obras.find(o => (!o.pasta || /00_SERVI[ÇC]OS$/.test(o.pasta)) && palavras(o.nome).filter(w => pt.includes(w)).length >= 2) || null; };
+      return db.obras.find(o => (!o.pasta || /(00_SERVI[ÇC]OS|HUB)$/.test(o.pasta)) && palavras(o.nome).filter(w => pt.includes(w)).length >= 2) || null; };
     // índice dos arquivos já no banco
     const chave = (oid, pasta, nome) => (oid || '') + '|' + norm(pasta) + '|' + String(nome || '').toLowerCase();
     const idx = new Map(); db.arquivos.forEach(a => { idx.set(chave(a.obraId, a.pasta, a.nome), a); if (a.caminho) idx.set('@' + a.caminho.toLowerCase(), a); });
     const vistos = new Set(); const tops = new Set(); const obraDoTop = {};
     const itens = inv.itens || [];
-    // 1) pastas de obra em 00_SERVIÇOS
-    itens.forEach(([rel]) => { const p = rel.split('/'); if (p[0] === '00_SERVIÇOS' && p[1]) tops.add(p[1]); });
+    // 1) pastas de obra em HUB (a antiga 00_SERVIÇOS só entra no índice de arquivos)
+    itens.forEach(([rel]) => { const p = rel.split('/'); if (p[0] === 'HUB' && p[1]) tops.add(p[1]); });
     [...tops].sort().forEach(top => {
       let o = obraDaPasta(top); const m = /^\s*0*(\d+)\s*-\s*(.+)$/.exec(top);
       if (!o && m && +m[1] > 0) {   // pastas 00… são modelos/gerais, não viram obra
@@ -447,12 +447,12 @@ window.SincDrive = (() => {
         let cli = nomeCli ? db.pessoas.find(p => norm(p.nome) === norm(nomeCli)) : null;
         if (!cli && nomeCli) { cli = { id: Store.nextId('pessoas'), nome: nomeCli, tipo: 'Cliente', email: '', telefone: '', cpf: '', obs: `Criado pela sincronização com o drive a partir da pasta "${top}". Completar dados.`, criadoEm: agora }; db.pessoas.push(cli); r.clientes++; }
         o = { id, numero: String(num), nome: titulo(resto), tipo: 'Serviço', modalidade: 'Prestação de serviço de engenharia', status: 'Prospecção', fase: '00_COMERCIAL', clienteIds: cli ? [cli.id] : [], rtId: '', gestorId: '', endereco: '', cidade, uf: 'MG', cep: '', area: 0, valorContrato: 0, valorImovel: 0, valorFinanciado: 0, custoPrevisto: 0,
-          dataInicio: '', descricao: `Criada pela sincronização com o drive em ${UI.date(hoje)} (pasta 00_SERVIÇOS/${top}).`, equipe: [], pasta: '00_VTN/00_SERVIÇOS/' + top, criadoEm: agora };
+          dataInicio: '', descricao: `Criada pela sincronização com o drive em ${UI.date(hoje)} (pasta HUB/${top}).`, equipe: [], pasta: '00_VTN/HUB/' + top, criadoEm: agora };
         const rt = db.obras.find(x => x.rtId); if (rt) { o.rtId = rt.rtId; o.gestorId = rt.gestorId || rt.rtId; }
         db.obras.push(o); porPasta[norm(top)] = o; r.obras.push(o.id + ' ' + o.nome);
       }
       obraDoTop[top] = o || null;
-      if (o && (!o.pasta || /00_SERVI[ÇC]OS$/.test(o.pasta))) { o.pasta = '00_VTN/00_SERVIÇOS/' + top; porPasta[norm(top)] = o; }
+      if (o && (!o.pasta || /(00_SERVI[ÇC]OS|HUB)$/.test(o.pasta))) { o.pasta = '00_VTN/HUB/' + top; porPasta[norm(top)] = o; }
     });
     // 2) todos os arquivos
     const docsPorObra = {};
@@ -460,7 +460,7 @@ window.SincDrive = (() => {
       if (tam < 0) return; r.total++;
       if (LIXO.test(rel) || SENSIVEL.test(rel)) { r.ignorados++; return; }
       const p = rel.split('/'); const nome = p.pop(); let obraId = null, pasta;
-      if (p[0] === '00_SERVIÇOS' && obraDoTop[p[1]]) { obraId = obraDoTop[p[1]].id; pasta = p.slice(2).join('/') || '(raiz)'; }
+      if (p[0] === 'HUB' && obraDoTop[p[1]]) { obraId = obraDoTop[p[1]].id; pasta = p.slice(2).join('/') || '(raiz)'; }
       else pasta = p.join('/');
       const data = ms ? new Date(ms).toISOString().slice(0, 10) : '';
       const a = idx.get('@' + rel.toLowerCase()) || idx.get(chave(obraId, pasta, nome));

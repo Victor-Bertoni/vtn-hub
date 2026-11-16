@@ -138,7 +138,7 @@ Views.obras = {
     const n = Store.insert('obras', Object.assign(d, newId ? { id: newId } : {}, { equipe: [] }));
     if (!n.numero) Store.update('obras', n.id, { numero: String(+n.id.split('-')[1]) });
     UI.toast('Obra criada: ' + n.id);
-    if (window.Drive) Drive.criarPasta(Store.get('obras', n.id)).then(c => { if (c) UI.toast('Pasta criada no drive: 00_SERVIÇOS › ' + c); });
+    if (window.Drive) Drive.criarPasta(Store.get('obras', n.id)).then(c => { if (c) UI.toast('Pasta criada no drive: 00_VTN › HUB › ' + c); });
     location.hash = '#/obra/' + n.id;
   }
 };

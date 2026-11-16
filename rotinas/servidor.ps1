@@ -105,19 +105,20 @@ function Conferir-Sessao($s) {
   $s.papel = $u.papel; return $s
 }
 
-# ---------- orçamento na pasta da obra (OneDrive\00_VTN\00_SERVIÇOS\<nº> - <NOME>\..COMERCIAL) ----------
+# ---------- pastas das obras: OneDrive\00_VTN\HUB\<nº> - <NOME> (desde 16/11/2026; a antiga 00_SERVIÇOS fica como arquivo) ----------
 # Só cria arquivos e pastas novos; nunca substitui nem apaga nada.
-$Servicos = Join-Path $OneDrive '00_VTN\00_SERVIÇOS'
+$Servicos = Join-Path $OneDrive '00_VTN\HUB'
 $FasesObra = @{ COMERCIAL = '01_COMERCIAL'; 'EXECUÇÃO' = '02_EXECUÇÃO'; ENTREGA = '03_ENTREGA' }
-# acha (ou cria) a pasta da obra: 00_SERVIÇOS\<nº> - <NOME>  (+ 01_COMERCIAL, 02_EXECUÇÃO, 03_ENTREGA quando é nova)
+# acha (ou cria) a pasta da obra: HUB\<nº> - <NOME>  (+ 01_COMERCIAL, 02_EXECUÇÃO, 03_ENTREGA quando é nova)
 function Pasta-DaObra([int]$numero, [string]$nome, [switch]$Criar) {
-  if (-not (Test-Path -LiteralPath $Servicos)) { throw "pasta 00_SERVIÇOS não encontrada" }
+  if (-not (Test-Path -LiteralPath (Split-Path $Servicos))) { throw "pasta 00_VTN não encontrada no OneDrive" }
+  New-Item -ItemType Directory -Force -Path $Servicos | Out-Null
   $pasta = Get-ChildItem -LiteralPath $Servicos -Directory | Where-Object { $_.Name -match '^\s*0*(\d+)\s*-' -and [int]$Matches[1] -eq $numero } | Select-Object -First 1
   if (-not $pasta) {
     if (-not $Criar) { return $null }
     $limpo = (($nome -replace '[\\/:*?"<>|]', '') -replace '\s+', ' ').Trim().ToUpper()
     if (-not $limpo) { $limpo = 'OBRA' }
-    $pasta = New-Item -ItemType Directory -Path (Join-Path $Servicos ("$numero - $limpo"))
+    $pasta = New-Item -ItemType Directory -Path (Join-Path $Servicos ('{0:D2} - {1}' -f $numero, $limpo))
     foreach ($f in $FasesObra.Values) { New-Item -ItemType Directory -Force -Path (Join-Path $pasta.FullName $f) | Out-Null }
     Escrever-Log "Pasta da obra criada: $($pasta.Name)"
   }

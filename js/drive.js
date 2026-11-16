@@ -1,5 +1,5 @@
 /* =========================================================
-   VTN HUB – PASTAS DAS OBRAS NO DRIVE (OneDrive\00_VTN\00_SERVIÇOS)
+   VTN HUB – PASTAS DAS OBRAS NO DRIVE (OneDrive\00_VTN\HUB – antes era 00_SERVIÇOS)
    Tudo passa pelo servidor do computador do Victor e só administradores gravam.
    • Obra nova  -> cria "NN - NOME" com 01_COMERCIAL, 02_EXECUÇÃO e 03_ENTREGA
    • Documentos (orçamento, proposta, contrato, recibo, termo) -> PDF na fase certa

@@ -47,6 +47,7 @@ try {
   Start-Process $ps -Verb RunAs -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $aqui 'energia_e_inicio.ps1')`" -Usuario `"$env:USERDOMAIN\$env:USERNAME`" -Pasta `"$aqui`""
   if (Test-Path (Join-Path $env:TEMP 'vtn_s4u_ok.txt')) { Write-Host 'OK  servidor sempre ligado (tomada, tampa fechada, antes do login)' -ForegroundColor Green }
 } catch { Write-Host 'Aviso: sem permissão de administrador; o servidor liga quando você entra no Windows e a suspensão continua como estava.' -ForegroundColor Yellow }
+Criar 'Monitor' 'monitor.ps1' (New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME") $confServ -Escondido   # ícone ao lado do relógio: servidor ligado?
 Criar 'Backup diário' 'backup_diario.ps1' (New-ScheduledTaskTrigger -Daily -At 18:00)
 Criar 'Vigia fontes oficiais' 'radar_semanal.ps1' (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 08:30)
 Criar 'CUB mensal' 'cub_mensal.ps1' (New-ScheduledTaskTrigger -Daily -At 09:00)
@@ -76,6 +77,7 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Silen
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 Start-ScheduledTask -TaskPath '\VTN Hub\' -TaskName 'Servidor'
+Start-ScheduledTask -TaskPath '\VTN Hub\' -TaskName 'Monitor'
 
 $ok = $false
 for ($i = 0; $i -lt 30; $i++) { Start-Sleep -Seconds 2; try { if ((Invoke-RestMethod "http://localhost:$Porta/api/info" -TimeoutSec 3).ok) { $ok = $true; break } } catch { } }
