@@ -364,8 +364,13 @@ if (-not (Pegar-Vez)) {
     $pegou = $false; for ($i = 0; $i -lt 15 -and -not $pegou; $i++) { Start-Sleep -Seconds 1; $pegou = Pegar-Vez }
     if (-not $pegou) { Escrever-Log 'Não consegui fechar o servidor antigo; este sai para não brigar com ele'; exit }
   }
-} elseif (-not $script:mtxServ) {
-  Outros-Servidores | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch { } }
+}
+# uma versão antiga (sem essa trava) pode ainda estar rodando: fecha também
+$antigos = Outros-Servidores
+if ($antigos) {
+  Escrever-Log "Fechando $($antigos.Count) servidor(es) antigo(s) que ainda rodava(m) neste computador"
+  $antigos | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch { Escrever-Log "Aviso: não consegui fechar o servidor antigo (processo $($_.ProcessId)): $($_.Exception.Message)" } }
+  Start-Sleep -Seconds 2
 }
 
 Usar-PastaCompartilhada
