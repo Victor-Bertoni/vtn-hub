@@ -10,7 +10,21 @@
 $Cf = Join-Path $DirLocal 'cloudflared.exe'
 $CfLog = Join-Path $DirLocal 'tunel.log'
 $ArqEndereco = Join-Path $DirLocal 'endereco.txt'
-$script:procTunel = $null; $script:urlTunel = ''; $script:inicioLog = 0L; $script:quedasRapidas = 0; $script:esperarTunel = $null
+$script:procTunel = $null; $script:urlTunel = ''; $script:inicioLog = 0L; $script:quedasRapidas = 0; $script:esperarTunel = $null; $script:rodadasTunel = 0
+
+if (-not ('VtnErroTunel' -as [type])) {
+  Add-Type -TypeDefinition @"
+public class VtnErroTunel {
+  private System.Text.StringBuilder sb = new System.Text.StringBuilder();
+  public void Ligar(System.Diagnostics.Process p) {
+    p.ErrorDataReceived += (s, e) => { if (e.Data != null) { lock (sb) { sb.AppendLine(e.Data); if (sb.Length > 20000) sb.Remove(0, 10000); } } };
+    p.BeginErrorReadLine();
+  }
+  public string Texto() { lock (sb) { return sb.ToString(); } }
+}
+"@
+}
+$script:errTunel = $null
 
 function Baixar-Cloudflared {
   if (Test-Path $Cf) { return $true }
@@ -39,8 +53,10 @@ function Iniciar-Tunel {
   $pi = New-Object Diagnostics.ProcessStartInfo
   $pi.FileName = $Cf
   $pi.Arguments = "tunnel --no-autoupdate --loglevel info --logfile `"$CfLog`" --url http://127.0.0.1:$Porta --http-host-header localhost:$Porta"
-  $pi.UseShellExecute = $false; $pi.CreateNoWindow = $true
+  $pi.UseShellExecute = $false; $pi.CreateNoWindow = $true; $pi.RedirectStandardError = $true
   $script:procTunel = [Diagnostics.Process]::Start($pi)
+  # lê o que o cloudflared escreve no stderr numa linha separada (sem isso ele poderia travar) e guarda o fim para mostrar o motivo de uma queda
+  $script:errTunel = New-Object VtnErroTunel; try { $script:errTunel.Ligar($script:procTunel) } catch { }
   $script:urlTunel = ''; $script:urlCandidato = ''
   Escrever-Log 'Túnel da Cloudflare iniciando...'
 }
@@ -61,11 +77,16 @@ function Vigiar-Tunel {
   if ($script:procTunel.HasExited) {
     if ($script:esperarTunel -and (Get-Date) -lt $script:esperarTunel) { return $false }
     $vida = 999; try { $vida = ((Get-Date) - $script:procTunel.StartTime).TotalSeconds } catch { }
-    if ($vida -lt 30) { $script:quedasRapidas++ } else { $script:quedasRapidas = 0 }
-    if ($script:quedasRapidas -ge 5) {
-      $script:quedasRapidas = 0; $script:esperarTunel = (Get-Date).AddMinutes(1)
-      Escrever-Log 'Túnel fechou logo ao abrir 5 vezes seguidas; tentando de novo em 1 minuto'; return $false
+    $motivo = ''
+    try { Start-Sleep -Milliseconds 300; $err = $script:errTunel.Texto(); $l = @($err -split "`r?`n" | Where-Object { $_ -match 'ERR|error|failed|429|Too Many' }); if ($l) { $motivo = ($l[-1] -replace '^\S+\s+', '').Trim() } } catch { }
+    if ($vida -lt 60) { $script:quedasRapidas++ } else { $script:quedasRapidas = 0; $script:rodadasTunel = 0 }
+    if ($script:quedasRapidas -ge 3) {
+      # a Cloudflare limita quantos túneis grátis podem ser pedidos seguidos: esperar cada vez mais (2, 4, 8, até 15 min)
+      $script:quedasRapidas = 0; $script:rodadasTunel++
+      $min = [Math]::Min(15, [Math]::Pow(2, $script:rodadasTunel)); $script:esperarTunel = (Get-Date).AddMinutes($min)
+      Escrever-Log ("Túnel fechou logo ao abrir 3 vezes seguidas{0}; tentando de novo em {1} min" -f $(if ($motivo) { " ($motivo)" } else { '' }), $min); return $false
     }
+    if ($motivo) { Escrever-Log "Túnel fechou: $motivo" }
     Escrever-Log 'Túnel caiu; ligando de novo'; Iniciar-Tunel; return $false
   }
   if ($script:urlTunel) { return $false }
