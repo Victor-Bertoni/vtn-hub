@@ -10,7 +10,7 @@
 $Cf = Join-Path $DirLocal 'cloudflared.exe'
 $CfLog = Join-Path $DirLocal 'tunel.log'
 $ArqEndereco = Join-Path $DirLocal 'endereco.txt'
-$script:procTunel = $null; $script:urlTunel = ''
+$script:procTunel = $null; $script:urlTunel = ''; $script:inicioLog = 0L; $script:quedasRapidas = 0; $script:esperarTunel = $null
 
 function Baixar-Cloudflared {
   if (Test-Path $Cf) { return $true }
@@ -26,11 +26,19 @@ function Baixar-Cloudflared {
 function Iniciar-Tunel {
   if (-not (Baixar-Cloudflared)) { return }
   # fecha um túnel antigo deste mesmo programa (de uma execução anterior do servidor)
-  Get-Process cloudflared -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $Cf } | Stop-Process -Force -ErrorAction SilentlyContinue
-  [IO.File]::WriteAllText($CfLog, '')
+  # fecha só o túnel deste servidor ou um que ficou órfão (o servidor que o abriu já fechou)
+  if ($script:procTunel) { try { if (-not $script:procTunel.HasExited) { $script:procTunel.Kill() } } catch { } }
+  $velhos = @(Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -eq $Cf -and ($_.ParentProcessId -eq $PID -or -not (Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue)) } |
+    ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
+  $velhos | Stop-Process -Force -ErrorAction SilentlyContinue
+  if ($velhos) { $velhos | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue }
+  # o registro do túnel anterior pode continuar no arquivo (se ele ainda estava preso): só vale o que vier depois daqui
+  try { [IO.File]::WriteAllText($CfLog, '') } catch { }
+  $script:inicioLog = 0L; try { $script:inicioLog = (Get-Item -LiteralPath $CfLog -ErrorAction Stop).Length } catch { }
   $pi = New-Object Diagnostics.ProcessStartInfo
   $pi.FileName = $Cf
-  $pi.Arguments = "tunnel --no-autoupdate --loglevel info --logfile `"$CfLog`" --url http://localhost:$Porta --http-host-header localhost:$Porta"
+  $pi.Arguments = "tunnel --no-autoupdate --loglevel info --logfile `"$CfLog`" --url http://127.0.0.1:$Porta --http-host-header localhost:$Porta"
   $pi.UseShellExecute = $false; $pi.CreateNoWindow = $true
   $script:procTunel = [Diagnostics.Process]::Start($pi)
   $script:urlTunel = ''; $script:urlCandidato = ''
@@ -50,12 +58,24 @@ Add-Type -AssemblyName System.Net.Http
 $script:clienteHttp = New-Object Net.Http.HttpClient; $script:clienteHttp.Timeout = [TimeSpan]::FromSeconds(10)
 function Vigiar-Tunel {
   if (-not $script:procTunel) { return $false }
-  if ($script:procTunel.HasExited) { Escrever-Log 'Túnel caiu; ligando de novo'; Iniciar-Tunel; return $false }
+  if ($script:procTunel.HasExited) {
+    if ($script:esperarTunel -and (Get-Date) -lt $script:esperarTunel) { return $false }
+    $vida = 999; try { $vida = ((Get-Date) - $script:procTunel.StartTime).TotalSeconds } catch { }
+    if ($vida -lt 30) { $script:quedasRapidas++ } else { $script:quedasRapidas = 0 }
+    if ($script:quedasRapidas -ge 5) {
+      $script:quedasRapidas = 0; $script:esperarTunel = (Get-Date).AddMinutes(1)
+      Escrever-Log 'Túnel fechou logo ao abrir 5 vezes seguidas; tentando de novo em 1 minuto'; return $false
+    }
+    Escrever-Log 'Túnel caiu; ligando de novo'; Iniciar-Tunel; return $false
+  }
   if ($script:urlTunel) { return $false }
   if (-not $script:urlCandidato) {
     try {
-      $fs = [IO.File]::Open($CfLog, 'Open', 'Read', 'ReadWrite'); $sr = New-Object IO.StreamReader($fs); $t = $sr.ReadToEnd(); $sr.Close()
-      if ($t -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $script:urlCandidato = $Matches[0] + '/'; $script:candidatoDesde = Get-Date }
+      $fs = [IO.File]::Open($CfLog, 'Open', 'Read', 'ReadWrite')
+      if ($script:inicioLog -gt 0 -and $script:inicioLog -le $fs.Length) { [void]$fs.Seek($script:inicioLog, 'Begin') }
+      $sr = New-Object IO.StreamReader($fs); $t = $sr.ReadToEnd(); $sr.Close()
+      $achados = [regex]::Matches($t, 'https://[a-z0-9-]+\.trycloudflare\.com') | Where-Object { $_.Value -ne 'https://api.trycloudflare.com' }
+      if ($achados) { $script:urlCandidato = @($achados)[-1].Value + '/'; $script:candidatoDesde = Get-Date; Escrever-Log "Túnel aberto: $($script:urlCandidato) (testando...)" }
     } catch { }
     if (-not $script:urlCandidato) { return $false }
   }

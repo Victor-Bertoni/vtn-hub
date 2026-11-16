@@ -340,6 +340,34 @@ function Decidir-Papel {
   }
 }
 
+
+# Um servidor só por computador. Dois ao mesmo tempo (ex.: o antigo não fechou e outro foi ligado)
+# derrubavam o túnel um do outro sem parar. O mais novo fecha o antigo; se não conseguir, ele mesmo sai.
+function Pegar-Vez {
+  if (-not $script:mtxServ) { return $true }
+  try { return $script:mtxServ.WaitOne(0) } catch {
+    $x = $_.Exception; while ($x) { if ($x -is [Threading.AbandonedMutexException]) { return $true }; $x = $x.InnerException }
+    return $false
+  }
+}
+function Outros-Servidores {
+  @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*servidor.ps1*' -and $_.ProcessId -ne $PID })
+}
+$script:mtxServ = $null
+try { $script:mtxServ = New-Object Threading.Mutex($false, 'Global\VTNHubServidor') } catch { }
+if (-not (Pegar-Vez)) {
+  Start-Sleep -Seconds 8   # pode ser a versão anterior saindo depois de se atualizar
+  if (-not (Pegar-Vez)) {
+    Escrever-Log 'Outro servidor já estava rodando neste computador; fechando o antigo'
+    Outros-Servidores | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch { } }
+    $pegou = $false; for ($i = 0; $i -lt 15 -and -not $pegou; $i++) { Start-Sleep -Seconds 1; $pegou = Pegar-Vez }
+    if (-not $pegou) { Escrever-Log 'Não consegui fechar o servidor antigo; este sai para não brigar com ele'; exit }
+  }
+} elseif (-not $script:mtxServ) {
+  Outros-Servidores | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch { } }
+}
+
 Usar-PastaCompartilhada
 Colocar-Instalador
 if ((Sessao-Windows) -ne 0) { Migrar-Protegidos }   # deixa o token/chaves legíveis também quando o Windows liga sem ninguém entrar
