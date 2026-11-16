@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Servidor VTN Hub</title>
+<meta name="theme-color" content="#0f172a">
+<link rel="icon" href="img/icone-192.png">
+<link rel="apple-touch-icon" href="img/icone-192.png">
+<link rel="manifest" href="servidor.webmanifest">
+<style>
+  :root{--bg:#f1f5f9;--card:#fff;--tx:#0f172a;--mu:#64748b;--ln:#e2e8f0;--ok:#16a34a;--warn:#f59e0b;--err:#dc2626;--info:#2563eb}
+  @media (prefers-color-scheme:dark){:root{--bg:#0b1220;--card:#111a2e;--tx:#e2e8f0;--mu:#94a3b8;--ln:#1e293b}}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Inter,system-ui,Segoe UI,Arial,sans-serif}
+  main{max-width:860px;margin:0 auto;padding:18px 16px 40px}
+  h1{font-size:20px;margin:0}.mu{color:var(--mu)}.tiny{font-size:12.5px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}
+  .hero{border-radius:20px;padding:22px;color:#fff;display:flex;gap:18px;align-items:center;box-shadow:0 14px 40px rgba(15,23,42,.18)}
+  .hero .dot{width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,.25);display:grid;place-items:center;flex:none}
+  .hero .dot i{width:30px;height:30px;border-radius:50%;background:#fff;animation:p 1.6s infinite}
+  @keyframes p{50%{opacity:.45}}
+  .hero h2{margin:0;font-size:24px}.hero p{margin:4px 0 0;opacity:.92}
+  .g{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:14px 0}
+  .k{background:var(--card);border:1px solid var(--ln);border-radius:14px;padding:12px 14px}
+  .k span{display:block;font-size:12px;color:var(--mu)}.k b{font-size:18px}.k small{display:block;color:var(--mu);font-size:12px}
+  .card{background:var(--card);border:1px solid var(--ln);border-radius:16px;padding:14px 16px;margin-top:12px}
+  .card h3{margin:0 0 8px;font-size:15px}
+  .it{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--ln)}.it:first-of-type{border-top:0}
+  .it b{flex:none;width:22px;text-align:center}.it.ok b{color:var(--ok)}.it.no b{color:var(--err)}.it.av b{color:var(--warn)}
+  ol{margin:6px 0 0;padding-left:20px}ol li{margin:4px 0}
+  button,a.btn{border:1px solid var(--ln);background:var(--card);color:var(--tx);border-radius:10px;padding:8px 12px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .tl{font-size:13px}.tl div{padding:4px 0;border-top:1px dashed var(--ln)}
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><div><h1>Servidor do VTN Hub</h1><div class="tiny mu" id="atu">conferindo…</div></div>
+    <div class="row"><button id="ref">Conferir agora</button><a class="btn" href="./">Abrir o VTN Hub</a></div></div>
+  <div class="hero" id="hero" style="background:#64748b"><div class="dot"><i></i></div><div><h2 id="tit">Conferindo…</h2><p id="sub"></p></div></div>
+  <div class="g" id="kpis"></div>
+  <div class="card" id="falta" hidden><h3>O que falta para ligar</h3><ol id="passos"></ol></div>
+  <div class="card"><h3>Itens conferidos</h3><div id="itens"></div></div>
+  <div class="card"><h3>Histórico desta tela</h3><div class="tl" id="hist"><span class="mu tiny">As mudanças de estado aparecem aqui enquanto a página estiver aberta.</span></div></div>
+  <p class="tiny mu">Esta página não precisa de login e não mostra dados da empresa: só o sinal que o servidor publica a cada 2 minutos e se ele responde pela internet. Atualiza sozinha a cada 15 segundos.</p>
+</main>
+<script>
+(() => {
+  const REPO = 'Victor-Bertoni/vtn-hub';
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const min = iso => iso ? (Date.now() - new Date(iso).getTime()) / 60000 : Infinity;
+  const ha = iso => { const m = Math.round(min(iso)); if (!isFinite(m)) return '—'; if (m < 1) return 'agora há pouco'; if (m < 60) return `há ${m} min`; const h = Math.round(m / 60); return h < 48 ? `há ${h} h` : `há ${Math.round(h / 24)} dias`; };
+  const quando = iso => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  let ultimo = '', hist = [];
+  async function json(url, opt) { const c = new AbortController(); const t = setTimeout(() => c.abort(), 9000); try { const r = await fetch(url, Object.assign({ cache: 'no-store', signal: c.signal }, opt || {})); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); } finally { clearTimeout(t); } }
+  async function endereco() {
+    try { return await json(`https://api.github.com/repos/${REPO}/contents/endereco.json?ref=consulta`, { headers: { Accept: 'application/vnd.github.raw+json' } }); }
+    catch (e) { return await json(`https://raw.githubusercontent.com/${REPO}/consulta/endereco.json?t=${Date.now()}`); }
+  }
+  async function conferir() {
+    $('atu').textContent = 'conferindo…';
+    let e = null, info = null, site = null, erroE = '';
+    try { e = await endereco(); } catch (x) { erroE = x.message; }
+    try { site = await json('versao.json?t=' + Date.now()); } catch (x) {}
+    const t0 = performance.now();
+    if (e && e.url) { try { info = await json(e.url.replace(/\/?$/, '/') + 'api/info?t=' + Date.now()); } catch (x) { info = null; } }
+    const ms = Math.round(performance.now() - t0);
+    const mSinal = e ? min(e.vivoEm || e.em) : Infinity;
+    const responde = !!(info && info.ok);
+    const ativo = responde && info.ativo !== false;
+    // estado
+    let cor, tit, sub;
+    if (!e) { cor = '#64748b'; tit = 'Sem informação'; sub = 'Não consegui ler o sinal do servidor no GitHub (' + esc(erroE) + '). Confira a internet deste aparelho.'; }
+    else if (ativo) { cor = (e.tomada === false || e.onedrive === false) ? '#d97706' : '#16a34a'; tit = 'Servidor LIGADO'; sub = `Computador ${esc(info.pc || e.pc)} · respondeu em ${ms} ms · ligado ${ha(info.desde || e.desde)}`; }
+    else if (responde && info.ativo === false) { cor = '#2563eb'; tit = 'Trocando de servidor'; sub = `${esc(info.pc)} respondeu como reserva. Aguarde 1–2 minutos.`; }
+    else if (mSinal < 6) { cor = '#d97706'; tit = 'Ligando ou reiniciando…'; sub = `${esc(e.pc)} deu sinal ${ha(e.vivoEm || e.em)}, mas ainda não respondeu pela internet. Normal por 1–3 minutos depois de ligar ou atualizar.`; }
+    else { cor = '#dc2626'; tit = 'Servidor DESLIGADO'; sub = `Último sinal de ${esc(e.pc || '?')} ${ha(e.vivoEm || e.em)} (${quando(e.vivoEm || e.em)}).`; }
+    $('hero').style.background = cor; $('tit').textContent = tit; $('sub').innerHTML = sub;
+    document.title = (ativo ? '🟢 ' : mSinal < 6 ? '🟡 ' : '🔴 ') + 'Servidor VTN Hub';
+    // cards
+    const versaoOk = site && e && e.versao && e.versao === site.versao;
+    $('kpis').innerHTML = [
+      ['Computador', esc(e ? e.pc : '—'), e && e.desde ? 'ligado desde ' + quando(e.desde) : ''],
+      ['Último sinal', e ? ha(e.vivoEm || e.em) : '—', e ? quando(e.vivoEm || e.em) : ''],
+      ['Responde pela internet', responde ? 'Sim' : 'Não', responde ? ms + ' ms' : ''],
+      ['Energia', e ? (e.tomada === false ? 'Bateria' : e.tomada ? 'Tomada' : '—') : '—', e && e.tomada === false ? 'na bateria ele dorme' : ''],
+      ['OneDrive', e ? (e.onedrive === false ? 'Fechado' : e.onedrive ? 'Aberto' : '—') : '—', 'sincroniza os dados'],
+      ['Versão', esc((info && info.versao) || (e && e.versao) || '—'), site ? (versaoOk ? 'atualizada' : 'site: ' + esc(site.versao)) : '']
+    ].map(k => `<div class="k"><span>${k[0]}</span><b>${k[1]}</b><small>${k[2]}</small></div>`).join('');
+    // itens
+    const it = [];
+    const add = (est, txt) => it.push(`<div class="it ${est}"><b>${est === 'ok' ? '✔' : est === 'no' ? '✖' : '!'}</b><div>${txt}</div></div>`);
+    add(e ? 'ok' : 'no', e ? 'Sinal do servidor publicado no GitHub' : 'Não consegui ler o sinal do servidor');
+    if (e) add(mSinal < 6 ? 'ok' : 'no', `Sinal de vida a cada 2 min: último ${ha(e.vivoEm || e.em)}`);
+    if (e) add(responde ? 'ok' : 'no', responde ? `Respondendo pelo endereço da internet (${esc(e.url)})` : 'Não respondeu pelo endereço da internet');
+    if (e) add(e.tomada === false ? 'av' : 'ok', e.tomada === false ? 'Computador na BATERIA – na bateria ele pode dormir e o servidor cai' : 'Computador na tomada');
+    if (e) add(e.onedrive === false ? 'no' : 'ok', e.onedrive === false ? 'OneDrive FECHADO no servidor – os dados não sincronizam' : 'OneDrive aberto no servidor');
+    if (e && site) add(versaoOk ? 'ok' : 'av', versaoOk ? `Programa atualizado (${esc(site.versao)})` : `Servidor com a versão ${esc(e.versao || '?')}; o site já está na ${esc(site.versao)} – ele atualiza sozinho em até 1 minuto`);
+    if (e && e.pedido) add('av', `O principal (${esc(e.pedido.para)}) pediu para voltar a ser o servidor; a troca acontece quando o OneDrive terminar de sincronizar`);
+    $('itens').innerHTML = it.join('');
+    // o que falta
+    const passos = [];
+    if (!ativo) {
+      if (!e) passos.push('Confira a internet deste celular/computador e toque em "Conferir agora".');
+      else if (mSinal < 6) passos.push('Espere 1–3 minutos: o servidor está ligando ou se atualizando.');
+      else {
+        passos.push(`Ligue o computador <b>${esc(e.pc || 'do servidor')}</b> e deixe <b>na tomada</b>.`);
+        passos.push('Entre no Windows (se pedir) e espere o OneDrive abrir – o servidor liga sozinho em 1 minuto.');
+        passos.push('Confira se o computador tem internet (Wi-Fi ou cabo).');
+        passos.push('Se em 3 minutos continuar vermelho: no computador, dê dois cliques em <b>INSTALAR VTN HUB</b> na Área de Trabalho.');
+        passos.push('Se houver servidor reserva configurado, ele assume sozinho em até 10 minutos.');
+      }
+    } else {
+      if (e.tomada === false) passos.push(`Ligue o ${esc(e.pc)} na tomada – na bateria ele dorme e o servidor cai.`);
+      if (e.onedrive === false) passos.push(`Abra o OneDrive no ${esc(e.pc)}.`);
+    }
+    $('falta').hidden = !passos.length; $('falta').querySelector('h3').textContent = ativo ? 'Para ficar 100%' : 'O que falta para ligar';
+    $('passos').innerHTML = passos.map(p => `<li>${p}</li>`).join('');
+    // histórico
+    if (tit !== ultimo) { hist.unshift(`${new Date().toLocaleTimeString('pt-BR')} – ${tit}`); hist = hist.slice(0, 30); $('hist').innerHTML = hist.map(h => `<div>${esc(h)}</div>`).join(''); ultimo = tit;
+      if (hist.length > 1 && 'Notification' in window && Notification.permission === 'granted') try { new Notification('VTN Hub – ' + tit, { body: $('sub').textContent, icon: 'img/icone-192.png' }); } catch (x) {} }
+    $('atu').textContent = 'Conferido às ' + new Date().toLocaleTimeString('pt-BR');
+  }
+  $('ref').onclick = () => { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); conferir(); };
+  conferir(); setInterval(() => { if (!document.hidden) conferir(); }, 15000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) conferir(); });
+})();
+</script>
+</body>
+</html>
